@@ -52,28 +52,7 @@ pedestrians (hard constraint or soft cost, selectable — `controller_mode`).
 
 ## Architecture
 
-```
-Qualisys (markers)                Nav2 (local costmap, statics)
-       |                                   |
-       v                                   v
-pacer_qualisys_bridge          pacer_nav2_controller (C++ plugin,
-(PedestrianTrackArray)          nav2_core::Controller — replaces ONLY
-       |                        Nav2's local controller, the rest of the
-       v                        Nav2 stack stays standard)
-pacer_predictor                          |
-(Social-STGCNN, 1 forward/pedestrian)    | (synchronous service call,
-       |                                 |  every control cycle)
-       v                                 v
-pacer_calibration                pacer_mpc_solver (ComputeMpcCommand:
-(online q_tupac(k) worker in     hard/soft NMPC, pacer_core, never
- a separate thread + on-demand    rewritten — same solver validated
- TrainPredictor/RecalibrateTupac  in simulation)
- services)
-       |
-       +---- /pacer/pedestrian_predictions, /pacer/q_tupac topics
-             (read by the Nav2 plugin like any other topic, no direct
-              coupling to the two nodes above)
-```
+![Architecture](images/code_description.png)
 
 The four Python nodes (`pacer_qualisys_bridge`, `pacer_predictor`,
 `pacer_calibration`, `pacer_mpc_solver`) are launched together by
