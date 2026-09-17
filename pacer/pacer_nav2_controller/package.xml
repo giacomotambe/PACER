@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pacer_nav2_controller</name>
+  <version>0.1.0</version>
+  <description>
+    Plugin nav2_core::Controller che integra l'NMPC TUPAC (pacer_core, via
+    servizio pacer_mpc_solver) direttamente nel controller_server di Nav2.
+    Nav2/costmap gestiscono gli ostacoli statici (costo soft); i pedoni
+    dinamici restano competenza del modulo TUPAC del progetto (vincolo
+    rigido o costo soft, calibrato online con TUPAC).
+  </description>
+  <maintainer email="giacomotambe@gmail.com">Giacomo</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>pluginlib</depend>
+  <depend>nav2_core</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_util</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>pacer_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <nav2_core plugin="${prefix}/pacer_nav2_controller_plugin.xml" />
+  </export>
+</package>

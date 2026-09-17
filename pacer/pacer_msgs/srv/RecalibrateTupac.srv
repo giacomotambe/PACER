@@ -1,0 +1,21 @@
+# Ricostruzione ON-DEMAND di D_cal e del warm-start di q_tupac(k) — servito
+# da pacer_calibration. Oggi D_cal e' ancora generato dal motore SFM
+# (§Sim2Real: nessun dato reale Qualisys usato ancora per ricalibrare);
+# model_path punta ai pesi gia' allenati (vedi TrainPredictor.srv) da usare
+# per calcolare gli score di non-conformita' sul pool.
+string model_path
+string scenario
+int32 n_runs_cal
+int32 n_peds_scene
+int32 seed
+float64 alpha
+float64 delta
+int32 h_param
+string out_calibration_path
+---
+bool success
+string message
+int32 n0
+int32[] k
+float64[] q_warmstart
+float64 elapsed_s

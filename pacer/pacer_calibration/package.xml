@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pacer_calibration</name>
+  <version>0.1.0</version>
+  <description>
+    Calibrazione TUPAC online (aggiornamento di q_tupac(k) in un thread
+    separato) + servizi ON-DEMAND di training del predittore e ricostruzione
+    di D_cal — mai impliciti nel nodo online (§Sim2Real).
+  </description>
+  <maintainer email="giacomotambe@gmail.com">Giacomo</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>pacer_msgs</depend>
+  <depend>pacer_core</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

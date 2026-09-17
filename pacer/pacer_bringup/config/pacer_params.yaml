@@ -1,0 +1,50 @@
+# Parametri dei nodi Python del progetto PACER/TUPAC (Qualisys, predittore,
+# calibrazione, solver MPC) — stessi valori calibrati/verificati in
+# simulazione (vedi note vault "MPC Uniciclo sui Pedoni - Vincolo Rigido vs
+# Costo Soft (confronto)" e "Sim2Real - dettagli implementativi"), qui come
+# parametri ROS2 invece che costanti negli script.
+
+pacer_qualisys_bridge:
+  ros__parameters:
+    pedestrian_ids: ["ped1", "ped2", "ped3"]   # nomi dei rigid body Qualisys (caschetti)
+    rigid_bodies_topic: "/rigid_bodies"
+    output_topic: "/pacer/pedestrian_tracks"
+    obs_len: 8
+    dt_out: 0.4
+    occlusion_timeout_s: 1.0
+    world_frame: "map"
+
+pacer_predictor:
+  ros__parameters:
+    model_path: ""   # da impostare: pesi .pt allenati (servizio TrainPredictor)
+    obs_len: 8
+    pred_len: 12
+    hidden_dim: 32
+    input_topic: "/pacer/pedestrian_tracks"
+    output_topic: "/pacer/pedestrian_predictions"
+    max_neighbors: 12
+
+pacer_calibration:
+  ros__parameters:
+    calibration_path: ""   # da impostare: file .npz (servizio RecalibrateTupac)
+    n_mpc: 6
+    alpha: 0.1
+    delta: 0.1
+    h_param: 12
+    predictions_topic: "/pacer/pedestrian_predictions"
+    tracks_topic: "/pacer/pedestrian_tracks"
+    q_tupac_topic: "/pacer/q_tupac"
+
+pacer_mpc_solver:
+  ros__parameters:
+    dt: 0.4
+    k_neigh: 6
+    cutoff_m: 7.0
+    weights: [6.0, 0.15, 0.02, 0.05]
+    lambda_soft: 1500.0
+    beta: 1.0
+    gamma_exp: 1.3
+    a_gauss: 1.0
+    d_safe_pedestrian: 2.0
+    w_clear_pedestrian: 6000.0
+    w_static: 4000.0

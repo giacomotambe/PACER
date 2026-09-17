@@ -1,0 +1,16 @@
+# Training ON-DEMAND del predittore Social-STGCNN (mai automatico nel nodo
+# online) — servito da pacer_calibration. Dataset generato dal motore SFM
+# (pacer_core.sfm_model), stesso protocollo 8:12 della simulazione validata.
+string scenario
+int32 n_runs_train
+int32 n_peds_scene
+int32 epochs
+float64 lr
+int32 hidden_dim
+int32 seed
+string out_model_path
+---
+bool success
+string message
+float64 final_nll
+float64 elapsed_s

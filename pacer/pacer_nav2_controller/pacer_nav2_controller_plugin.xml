@@ -1,0 +1,11 @@
+<library path="pacer_nav2_controller">
+  <class type="pacer_nav2_controller::PacerController" base_class_type="nav2_core::Controller">
+    <description>
+      Controller Nav2 che delega la pianificazione locale all'NMPC
+      TUPAC (vincolo rigido o costo soft) del progetto PACER, servito da
+      pacer_mpc_solver. Ostacoli statici dal local costmap di Nav2 (costo
+      soft); pedoni dinamici da pacer_predictor/pacer_calibration (vincolo
+      rigido calibrato TUPAC o costo soft, a seconda di controller_mode).
+    </description>
+  </class>
+</library>

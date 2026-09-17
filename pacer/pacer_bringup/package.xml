@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pacer_bringup</name>
+  <version>0.1.0</version>
+  <description>Launch file e parametri per i nodi del modulo TUPAC (Qualisys, predittore, calibrazione, MPC solver) + snippet nav2_params per il plugin PacerController.</description>
+  <maintainer email="giacomotambe@gmail.com">Giacomo</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>pacer_qualisys_bridge</exec_depend>
+  <exec_depend>pacer_predictor</exec_depend>
+  <exec_depend>pacer_calibration</exec_depend>
+  <exec_depend>pacer_mpc_solver</exec_depend>
+  <exec_depend>pacer_nav2_controller</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

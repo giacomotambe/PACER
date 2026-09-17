@@ -1,0 +1,37 @@
+# Snippet da incollare/mergere nel nav2_params.yaml del progetto (sezione
+# controller_server) — NON un file Nav2 completo: mostra solo come puntare
+# Nav2 al plugin pacer_nav2_controller invece di uno dei controller
+# standard (DWB, RPP, ecc.). Il resto dello stack Nav2 (planner_server,
+# behavior_server/recovery, bt_navigator, i local/global costmap) resta
+# quello standard — SOLO il controller locale cambia, per costruzione
+# (§Sim2Real "integrazione diretta a nav2": Nav2 gestisce gli statici via
+# costmap, il plugin aggiunge solo i pedoni dinamici del modulo TUPAC).
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 2.5   # = 1/dt_out, stesso passo del predittore/calibrazione (protocollo 8:12)
+    controller_plugins: ["PacerController"]
+
+    PacerController:
+      plugin: "pacer_nav2_controller::PacerController"
+      controller_mode: "soft"          # "hard" per il vincolo rigido — vedi nota di
+                                          # confronto nel vault prima di scegliere in produzione
+      n_mpc: 6
+      v_max: 1.6
+      omega_max: 2.0
+      lookahead_distance: 1.5
+      service_timeout_s: 0.35            # < 1/controller_frequency: mai bloccare Nav2 a lungo
+      static_obstacle_radius_m: 5.0
+      static_obstacle_cell_m: 0.3
+      max_static_obstacles: 20
+      static_obstacle_d_safe: 0.5         # raggio robot + margine residuo (da tarare sul robot reale)
+      mpc_service_name: "/pacer/compute_mpc_command"
+      pedestrian_predictions_topic: "/pacer/pedestrian_predictions"
+      q_tupac_topic: "/pacer/q_tupac"
+
+# local_costmap: quello standard di Nav2 (static layer da mappa, obstacle
+# layer da lidar/depth, inflation layer) — e' la sorgente degli ostacoli
+# STATICI che PacerController legge direttamente da costmap_ros_. NON
+# aggiungere i pedoni tracciati da Qualisys come layer del costmap: sono
+# gestiti a parte dal modulo TUPAC (rischio di doppio vincolo/chattering
+# altrimenti, §Sim2Real "ambiguita' statico/dinamico").

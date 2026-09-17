@@ -1,0 +1,43 @@
+services:
+  pacer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pacer-tupac-code-ros:latest
+    container_name: pacer_tupac
+    # Host networking: ROS2 DDS discovery and a real Qualisys/Nav2 setup
+    # expect to reach other nodes/hosts on the LAN without NAT.
+    network_mode: host
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/tmp/.Xauthority
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      # Live-edit sources from the host without rebuilding the image
+      # (one bind mount per top-level source folder, as in jo-zotac).
+      - ./pacer:/home/ros/src/pacer
+      - ./mocap4ros2_qualisys:/home/ros/src/mocap4ros2_qualisys
+      # X11 passthrough, for rviz2/plotjuggler-style debugging tools.
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ~/.Xauthority:/tmp/.Xauthority:ro
+      # rosbag2 recordings from the Qualisys experimental campaign.
+      - ./bags:/home/ros/bags
+      # model_path / calibration_path outputs from TrainPredictor /
+      # RecalibrateTupac (see README "Usage") — point params files there.
+      - pacer_models:/models
+    stdin_open: true
+    tty: true
+    command: bash
+
+volumes:
+  pacer_models:

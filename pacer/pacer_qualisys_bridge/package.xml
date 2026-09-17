@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pacer_qualisys_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    Ponte tra il sistema di motion capture Qualisys (pedoni con caschetto a
+    markers, identita' certa) e pacer_msgs/PedestrianTrackArray. Punto di
+    sostituzione futuro con un vero modulo di riconoscimento/tracking
+    (§Sim2Real).
+  </description>
+  <maintainer email="giacomotambe@gmail.com">Giacomo</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>pacer_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <!-- mocap_msgs: pacchetto dell'ecosistema mocap4ros2/qualisys_ros2, non
+       incluso in una installazione ROS2 di base — vendorizzato in
+       src/mocap4ros2_qualisys (github.com/CentroEPiaggio/mocap4ros2_qualisys),
+       costruito insieme al resto del workspace. -->
+  <exec_depend>mocap_msgs</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

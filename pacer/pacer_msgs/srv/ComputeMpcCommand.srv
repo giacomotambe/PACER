@@ -1,0 +1,26 @@
+# Un ciclo di NMPC (vincolo rigido o costo soft) — chiamato dal plugin
+# Nav2 pacer_nav2_controller::PacerController::computeVelocityCommands ad
+# ogni ciclo del controller server. Servito da pacer_mpc_solver, che importa
+# direttamente pacer_core.unicycle_nmpc / unicycle_nmpc_soft (stesso
+# solver validato in simulazione, nessuna riscrittura).
+string controller_mode
+float64 robot_x
+float64 robot_y
+float64 robot_theta
+float64 goal_x
+float64 goal_y
+int32 n_mpc
+float64 v_max
+float64 omega_max
+float64[] u_warm_flat
+pacer_msgs/PedestrianPredictionArray pedestrians
+pacer_msgs/QTupacSnapshot q_tupac
+pacer_msgs/StaticObstacle[] static_obstacles
+---
+bool success
+string status
+float64 v
+float64 omega
+float64[] u_full_flat
+float64 min_margin
+float64 cost_ped
