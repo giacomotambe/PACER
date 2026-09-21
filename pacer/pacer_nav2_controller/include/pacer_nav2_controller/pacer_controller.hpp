@@ -110,6 +110,23 @@ protected:
   int max_static_obstacles_{20};
   double static_obstacle_lethal_threshold_{253.0};
   double static_obstacle_d_safe_{0.5};   // raggio robot + margine di sicurezza residuo
+
+  // Allineamento finale all'orientamento del goal — pacer_core/l'NMPC
+  // (ComputeMpcCommand) non lo considera mai, porta solo goal_x/goal_y
+  // (§Sim2Real: nessuna riscrittura del solver). Nell'ultimo tratto
+  // (entro xy_goal_tolerance_ dal goal finale) l'NMPC viene sostituito da
+  // una semplice rotazione proporzionale in C++, qui nel ponte — vedi
+  // computeVelocityCommands().
+  double xy_goal_tolerance_{0.25};
+  double yaw_goal_tolerance_{0.25};
+  double k_align_{2.0};
+
+  // Correzione di rotta verso local_goal durante l'inseguimento normale
+  // (non solo nell'allineamento finale) — vedi commento in
+  // computeVelocityCommands(). pacer_core/l'NMPC non penalizza mai il
+  // bearing, solo la posizione: senza questa correzione l'heading puo'
+  // "congelarsi" lontano dal goal, causando overshoot sistematico.
+  double k_heading_bias_{1.0};
 };
 
 }  // namespace pacer_nav2_controller

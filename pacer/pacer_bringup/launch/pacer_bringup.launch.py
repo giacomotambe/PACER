@@ -45,4 +45,14 @@ def generate_launch_description():
             name="pacer_mpc_solver", output="screen",
             parameters=[params_file],
         ),
+        # Toglie dalla point cloud del lidar i punti vicini ai pedoni
+        # tracciati da Qualisys PRIMA che arrivi alla costmap di Nav2 (avviato
+        # a parte, vedi docstring sopra) — il nav2_params.yaml del progetto va
+        # puntato su /velodyne_points/pedestrian_filtered invece del topic
+        # grezzo del Velodyne, vedi nota in config/nav2_params_snippet.yaml.
+        Node(
+            package="pacer_pedestrian_filter", executable="pedestrian_filter_node",
+            name="pacer_pedestrian_filter", output="screen",
+            parameters=[params_file],
+        ),
     ])

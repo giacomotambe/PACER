@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pacer_sim</name>
+  <version>0.1.0</version>
+  <description>
+    Gazebo (gz-sim) test environment for pacer-tupac-code-ros: spawns the Jo
+    robot (jo_description) in a simple world, bridges it into Nav2
+    (jo_navigation, controller_server pointed at PacerController) and
+    replaces pacer_qualisys_bridge with a synthetic pedestrian publisher
+    (no Qualisys hardware / motion capture available in simulation).
+  </description>
+  <maintainer email="giacomotambe@gmail.com">giacomotambe</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>pacer_msgs</exec_depend>
+  <exec_depend>jo_description</exec_depend>
+  <exec_depend>jo_navigation</exec_depend>
+  <exec_depend>pacer_bringup</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

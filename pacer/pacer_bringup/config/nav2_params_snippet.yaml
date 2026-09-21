@@ -10,9 +10,18 @@
 controller_server:
   ros__parameters:
     controller_frequency: 2.5   # = 1/dt_out, stesso passo del predittore/calibrazione (protocollo 8:12)
-    controller_plugins: ["PacerController"]
+    # ID "FollowPath", non "PacerController": il behavior tree di default di
+    # Nav2 (navigate_to_pose_w_replanning_and_recovery.xml, quello usato da
+    # bt_navigator quando non gli passi un BT custom) ha il controller_id
+    # dell'azione FollowPath cablato a "FollowPath" — un controller
+    # registrato sotto un altro nome non viene mai trovato (errore runtime
+    # "FollowPath called with controller name FollowPath, which does not
+    # exist", trovato testando in simulazione, pacer_sim). Il nome del
+    # plugin C++ resta pacer_nav2_controller::PacerController, cambia solo
+    # la chiave/ID con cui lo si registra qui.
+    controller_plugins: ["FollowPath"]
 
-    PacerController:
+    FollowPath:
       plugin: "pacer_nav2_controller::PacerController"
       controller_mode: "soft"          # "hard" per il vincolo rigido — vedi nota di
                                           # confronto nel vault prima di scegliere in produzione
@@ -25,13 +34,33 @@ controller_server:
       static_obstacle_cell_m: 0.3
       max_static_obstacles: 20
       static_obstacle_d_safe: 0.5         # raggio robot + margine residuo (da tarare sul robot reale)
+      # Allineamento finale all'orientamento del goal (pacer_core/l'NMPC
+      # non lo considera mai, vedi pacer_controller.hpp/.cpp) — tienile
+      # allineate a xy/yaw_goal_tolerance del goal_checker del progetto.
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.25
+      k_align: 2.0
+      k_heading_bias: 1.0
       mpc_service_name: "/pacer/compute_mpc_command"
       pedestrian_predictions_topic: "/pacer/pedestrian_predictions"
       q_tupac_topic: "/pacer/q_tupac"
 
-# local_costmap: quello standard di Nav2 (static layer da mappa, obstacle
-# layer da lidar/depth, inflation layer) — e' la sorgente degli ostacoli
-# STATICI che PacerController legge direttamente da costmap_ros_. NON
-# aggiungere i pedoni tracciati da Qualisys come layer del costmap: sono
-# gestiti a parte dal modulo TUPAC (rischio di doppio vincolo/chattering
-# altrimenti, §Sim2Real "ambiguita' statico/dinamico").
+# local_costmap/global_costmap: quelli standard di Nav2 (static layer da
+# mappa, obstacle/voxel layer da lidar, inflation layer) — sono la sorgente
+# degli ostacoli STATICI che PacerController legge direttamente da
+# costmap_ros_. NON aggiungere i pedoni tracciati da Qualisys come layer
+# del costmap: sono gestiti a parte dal modulo TUPAC (rischio di doppio
+# vincolo/chattering altrimenti, §Sim2Real "ambiguita' statico/dinamico").
+#
+# IMPORTANTE: il/i costmap del progetto (non in questo repo — questo file e'
+# solo lo snippet del controller_server) NON devono puntare il loro
+# observation_sources "scan" al topic grezzo del Velodyne
+# (es. /velodyne_points). Vanno puntati a
+# /velodyne_points/pedestrian_filtered, pubblicato dal nodo
+# pacer_pedestrian_filter (avviato da pacer_bringup.launch.py insieme agli
+# altri nodi TUPAC), che toglie i punti entro exclusion_radius da ciascun
+# pedone tracciato prima che la nuvola arrivi alla costmap — altrimenti il
+# corpo del pedone resta marcato come ostacolo statico anche dopo che e'
+# passato, lasciando una scia di celle ad alto costo lungo tutta la sua
+# traiettoria (oltre a duplicare l'evitamento che deve restare esclusivo
+# dell'NMPC). Vedi pacer_pedestrian_filter/README.md.

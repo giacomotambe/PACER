@@ -48,3 +48,11 @@ pacer_mpc_solver:
     d_safe_pedestrian: 2.0
     w_clear_pedestrian: 6000.0
     w_static: 4000.0
+
+pacer_pedestrian_filter:
+  ros__parameters:
+    input_topic: "/velodyne_points"
+    output_topic: "/velodyne_points/pedestrian_filtered"
+    tracks_topic: "/pacer/pedestrian_tracks"
+    exclusion_radius: 0.6
+    tf_timeout_s: 0.1

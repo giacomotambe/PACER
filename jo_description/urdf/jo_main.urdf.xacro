@@ -1,0 +1,69 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro"  name="jo">
+
+    <xacro:include filename="robot_core.xacro" />
+    <xacro:include filename="track.xacro" />
+
+    <xacro:track side="left"/>
+    <xacro:track side="right"/>
+    <!-- <xacro:include filename="ros2_control.xacro" /> -->
+
+    <xacro:include filename="velodyne.xacro" />
+    <xacro:include filename="front_depth.xacro" />
+    <xacro:include filename="back_depth.xacro" />
+    <xacro:include filename="imu.xacro" />
+
+    <!-- TrackedVehicle instantiation; the track links need to be instantiated separately -->
+    <gazebo>
+        <plugin filename="gz-sim-tracked-vehicle-system"
+                name="gz::sim::systems::TrackedVehicle">
+
+            <!-- Left track links -->
+            <left_track>
+                <link>left_bottom_belt</link>
+            </left_track>
+            <left_track>
+                <link>front_left_roller</link>
+            </left_track>
+            <left_track>
+                <link>back_left_roller</link>
+            </left_track>
+            <left_track>
+                <link>left_front_bottom_belt</link>
+            </left_track>
+            <!-- Right track links -->
+            <right_track>
+                <link>right_bottom_belt</link>
+            </right_track>
+            <right_track>
+                <link>back_right_roller</link>
+            </right_track>
+            <right_track>
+                <link>front_right_roller</link>
+            </right_track>
+            <right_track>
+                <link>right_front_bottom_belt</link>
+            </right_track>
+
+
+            <!-- ODOMETRY SEEMS TO NOT WORK FINE -->
+            <!-- Distance between track centerlines -->
+            <tracks_separation>${chassis_width}</tracks_separation>
+            <!-- Used for odometry moment-arm calculation -->
+            <track_height>${back_roller_radius*2}</track_height>
+            <steering_efficiency>0.5</steering_efficiency>
+            <linear_velocity>
+                <max_velocity>2.0</max_velocity>
+                <max_acceleration>5.0</max_acceleration>
+            </linear_velocity>
+            <angular_velocity>
+                <max_velocity>1.5</max_velocity>
+                <max_acceleration>2.5</max_acceleration>
+            </angular_velocity>
+            <frame_id>odom</frame_id>
+            <child_frame_id>base_link</child_frame_id>
+            <odom_publish_frequency>50</odom_publish_frequency>
+        </plugin>
+    </gazebo>
+    
+</robot>

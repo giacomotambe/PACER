@@ -46,6 +46,14 @@ void PacerController::configure(
   nav2_util::declare_parameter_if_not_declared(
     node, plugin_name_ + ".static_obstacle_d_safe", rclcpp::ParameterValue(0.5));
   nav2_util::declare_parameter_if_not_declared(
+    node, plugin_name_ + ".xy_goal_tolerance", rclcpp::ParameterValue(0.25));
+  nav2_util::declare_parameter_if_not_declared(
+    node, plugin_name_ + ".yaw_goal_tolerance", rclcpp::ParameterValue(0.25));
+  nav2_util::declare_parameter_if_not_declared(
+    node, plugin_name_ + ".k_align", rclcpp::ParameterValue(2.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, plugin_name_ + ".k_heading_bias", rclcpp::ParameterValue(1.0));
+  nav2_util::declare_parameter_if_not_declared(
     node, plugin_name_ + ".mpc_service_name",
     rclcpp::ParameterValue(std::string("/pacer/compute_mpc_command")));
   nav2_util::declare_parameter_if_not_declared(
@@ -65,6 +73,10 @@ void PacerController::configure(
   node->get_parameter(plugin_name_ + ".static_obstacle_cell_m", static_obstacle_cell_m_);
   node->get_parameter(plugin_name_ + ".max_static_obstacles", max_static_obstacles_);
   node->get_parameter(plugin_name_ + ".static_obstacle_d_safe", static_obstacle_d_safe_);
+  node->get_parameter(plugin_name_ + ".xy_goal_tolerance", xy_goal_tolerance_);
+  node->get_parameter(plugin_name_ + ".yaw_goal_tolerance", yaw_goal_tolerance_);
+  node->get_parameter(plugin_name_ + ".k_align", k_align_);
+  node->get_parameter(plugin_name_ + ".k_heading_bias", k_heading_bias_);
 
   std::string mpc_service_name, pred_topic, q_topic;
   node->get_parameter(plugin_name_ + ".mpc_service_name", mpc_service_name);
@@ -227,6 +239,38 @@ geometry_msgs::msg::TwistStamped PacerController::computeVelocityCommands(
   cmd.twist.linear.x = 0.0;
   cmd.twist.angular.z = 0.0;
 
+  // Allineamento finale all'orientamento del goal — vedi commento
+  // sui membri xy_goal_tolerance_/yaw_goal_tolerance_/k_align_
+  // nell'header. pacer_core/l'NMPC non ragiona MAI in orientamento
+  // (ComputeMpcCommand porta solo goal_x/goal_y): senza questo, una volta
+  // in posizione ma con l'orientamento sbagliato, Nav2 non dichiara mai
+  // il goal raggiunto (il suo goal_checker controlla anche lo yaw) e il
+  // robot continua a rincorrere l'ultimo punto del path, ormai alle sue
+  // spalle — osservato in simulazione: inversione a U e oscillazione
+  // intorno al goal senza mai fermarsi. Qui SOLO nell'ultimo tratto,
+  // l'NMPC viene sostituito da una rotazione proporzionale pura; non e'
+  // una riscrittura del solver, solo un comportamento terminale nel
+  // ponte Nav2, coerente col resto (Nav2 gestisce gli statici via
+  // costmap, questo plugin aggiunge solo cio' che pacer_core non copre).
+  if (!path_.poses.empty()) {
+    const auto & final_goal = path_.poses.back().pose;
+    double dx = final_goal.position.x - pose.pose.position.x;
+    double dy = final_goal.position.y - pose.pose.position.y;
+    if (std::hypot(dx, dy) <= xy_goal_tolerance_) {
+      double goal_yaw = tf2::getYaw(final_goal.orientation);
+      double current_yaw = tf2::getYaw(pose.pose.orientation);
+      double raw_diff = goal_yaw - current_yaw;
+      double yaw_error = std::atan2(std::sin(raw_diff), std::cos(raw_diff));
+      if (std::abs(yaw_error) > yaw_goal_tolerance_) {
+        cmd.twist.angular.z = std::clamp(k_align_ * yaw_error, -omega_max_, omega_max_);
+        u_warm_.clear();   // prossima uscita dalla fase di allineamento: niente warm start stantio
+      }
+      // posizione E orientamento entro tolleranza: comando zero, lascia
+      // che il goal_checker di Nav2 dichiari il successo.
+      return cmd;
+    }
+  }
+
   if (!mpc_client_->service_is_ready()) {
     RCLCPP_WARN_THROTTLE(
       logger_, *client_node_->get_clock(), 2000,
@@ -282,6 +326,26 @@ geometry_msgs::msg::TwistStamped PacerController::computeVelocityCommands(
 
   cmd.twist.linear.x = response->v;
   cmd.twist.angular.z = response->omega;
+
+  // Correzione di rotta verso local_goal — pacer_core/l'NMPC ottimizza
+  // SOLO la distanza di posizione lungo l'orizzonte (w_goal/w_stage in
+  // unicycle_nmpc[_soft].py), mai il bearing verso il goal. Osservato in
+  // simulazione (log ciclo-per-ciclo): dopo una correzione iniziale
+  // l'heading si "congela" anche con un errore di bearing residuo di
+  // 0.3-0.5 rad, causando overshoot sistematico sui goal che richiedono
+  // una sterzata sostenuta. Somma qui una correzione proporzionale
+  // all'errore di bearing verso local_goal all'omega gia' calcolato
+  // dall'NMPC (che resta l'unica fonte per v e per l'evitamento
+  // pedoni/statici) — completa il solver, non lo sostituisce.
+  {
+    double bearing_to_local_goal = std::atan2(
+      local_goal.pose.position.y - pose.pose.position.y,
+      local_goal.pose.position.x - pose.pose.position.x);
+    double raw_diff = bearing_to_local_goal - tf2::getYaw(pose.pose.orientation);
+    double heading_error = std::atan2(std::sin(raw_diff), std::cos(raw_diff));
+    cmd.twist.angular.z = std::clamp(
+      cmd.twist.angular.z + k_heading_bias_ * heading_error, -omega_max_, omega_max_);
+  }
 
   // Warm start per il prossimo ciclo — stessa logica di
   // pacer_core.unicycle_nmpc[_soft].solve_step*: soft aggiorna SEMPRE,
