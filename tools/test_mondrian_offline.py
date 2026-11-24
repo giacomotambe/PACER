@@ -210,7 +210,9 @@ def test_calibration():
     res = {}
     for name, mode, dcal in cases:
         log = os.path.join(tmp, f"scores_{len(res)}.csv")
-        Node.PARAMS = dict(calibration_path=dcal, calib_method="bet", mondrian_group=mode,
+        # rev. 2026-11-24: "legacy" = bet a ogni offset senza alpha_far, la configurazione per cui il test
+        # e' stato scritto (il default ora e' il preset "standard", provato sotto)
+        Node.PARAMS = dict(calibration_path=dcal, calib_preset="legacy", mondrian_group=mode,
                            d_near=D_NEAR, score_log_csv=log, n_mpc=N_MPC)
         node = cn.CalibrationNode()
         _stream_static(node, mode, np.random.default_rng(1))
@@ -228,6 +230,22 @@ def test_calibration():
     assert g[(1, 0)][0] < 1.67 + 0.5, "il gruppo lontano resta vicino al nominale"
     q_m, q_g = res["marginale"][1][0, 0], res["Mondrian, D_cal per gruppo"][1][0, 0]
     assert q_g < q_m / 1.5, "e i lontani ricevono regioni piu' piccole del caso marginale"
+    print("  OK")
+    # preset "standard" (rev. 2026-11-24): xbet a k=1, static a k>=2, alpha 0.1 ai lontani a k=1
+    log = os.path.join(tmp, "scores_std.csv")
+    Node.PARAMS = dict(calibration_path=dcal_g, calib_preset="standard", mondrian_group="dist",
+                       d_near=D_NEAR, score_log_csv=log, n_mpc=N_MPC)
+    node = cn.CalibrationNode()
+    assert (node.calib_method, node.calib_method_long, node.alpha_far) == ("xbet", "static", 0.1)
+    _stream_static(node, "dist", np.random.default_rng(1))
+    node._log_f.close()
+    snap = node.published[-1]
+    r, q = _miss_from_log(log), np.array(snap.q).reshape(snap.n_groups, -1)
+    print(f"  preset standard                k=1 {r[(1, 1)][0]:5.2f} / {r[(1, 0)][0]:5.2f}   k=6 {r[(6, 1)][0]:5.2f} / "
+          f"{r[(6, 0)][0]:5.2f}   q k=1 per gruppo {np.array2string(q[:, 0], precision=2)}")
+    assert r[(1, 1)][0] < 3.5, "standard: vicini a k=1 coperti (alpha_1 = 1.67%)"
+    assert r[(1, 0)][0] < 10 + 3, "standard: lontani a k=1 vicini al loro alpha (10%)"
+    assert q[0, 0] < q_g, "standard: regioni k=1 dei lontani piu' piccole di legacy"
     print("  OK")
 
 
