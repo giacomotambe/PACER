@@ -20,6 +20,7 @@
        src/mocap4ros2_qualisys (github.com/CentroEPiaggio/mocap4ros2_qualisys),
        costruito insieme al resto del workspace. -->
   <exec_depend>mocap_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

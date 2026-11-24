@@ -78,6 +78,15 @@ controller_server:
 # lungo la sua traiettoria (oltre a duplicare l'evitamento che deve restare
 # esclusivo dell'NMPC). Vedi pacer_pedestrian_filter/README.md.
 #
+# LOCALIZZAZIONE (rev. 2026-11-24): la fa pacer_qualisys_bridge da Qualisys, pubblicando
+# map -> odom (map = frame di QTM, quello dei pedoni). Quindi nel bringup di Nav2:
+#   - NON avviare AMCL / slam_toolbox / robot_localization con map -> odom (conflitto su /tf);
+#     l'odometria della base (odom -> base_link) invece serve e resta com'e'.
+#   - global_costmap: global_frame "map", senza static_layer (nessuna mappa: rolling_window
+#     true, width/height dell'area di prova, es. 12 x 12 m) oppure con una mappa gia'
+#     espressa nelle coordinate di QTM.
+#   - local_costmap: global_frame "odom" (o "map"), robot_base_frame "base_link".
+#
 # Esempio per local_costmap (e uguale per global_costmap), lidar 2D:
 #
 # local_costmap:

@@ -17,6 +17,16 @@ pacer_qualisys_bridge:
     robot_body_name: ""         # rigid body del robot in QTM; di solito dal launch: robot_body:=<nome>
     publish_partial: true       # rev. 2026-11-11: pubblica anche storici < obs_len (pedoni appena entrati/riapparsi)
     robot_pose_topic: "/pacer/robot_pose"   # rev. 2026-11-13: posa del robot (richiede robot_body_name), per Mondrian
+    # rev. 2026-11-24: localizzazione da Qualisys. Pubblica world_frame -> odom_frame su /tf (al posto di AMCL),
+    # cosi' Nav2, filtro dei pedoni e MPC lavorano nel frame di Qualisys. Richiede robot_body_name.
+    # NON usare insieme ad AMCL/slam_toolbox (pubblicherebbero anche loro map -> odom).
+    publish_localization_tf: true
+    odom_frame: "odom"                       # frame dell'odometria della base; "" = pubblica map -> base_link (robot senza odometria)
+    base_frame: "base_link"
+    body_to_base: [0.0, 0.0, 0.0]            # posa di base_link nel rigid body QTM [x m, y m, yaw rad]: MISURARE
+    tf_rate: 30.0                            # [Hz]
+    tf_max_age_s: 0.3                        # posa mocap piu' vecchia (WiFi, occlusione) -> nessuna tf, Nav2 si ferma
+    tf_post_date_s: 0.1                      # come transform_tolerance di AMCL
 
 pacer_predictor:
   ros__parameters:

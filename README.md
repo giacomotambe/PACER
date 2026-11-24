@@ -106,6 +106,16 @@ is selected, and the safety filter has `away_only: true`.
        docker compose -f docker-compose.nuc.yml exec pacer bash
        ros2 launch qualisys_driver qualisys.launch.py
 
+   **Localization comes from Qualisys:**
+   - The bridge publishes `map -> odom` from the car's rigid body, so the map
+     frame is the QTM frame.
+   - Do **not** run AMCL or SLAM in the Nav2 bringup. The base odometry
+     (`odom -> base_link`) stays as it is.
+   - Measure `body_to_base` in `pacer_params.yaml`: the offset between the QTM
+     rigid body and `base_link`.
+   - Without wheel odometry, set `odom_frame: ""` and the bridge publishes
+     `map -> base_link` directly.
+
 4. **Shell 2, PACER** (`robot_body` is the car's rigid-body name in QTM;
    `run_name:=auto` writes the CSV logs to `./bags/runs/run_<date>/`):
 
