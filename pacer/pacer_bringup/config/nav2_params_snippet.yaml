@@ -23,8 +23,12 @@ controller_server:
 
     FollowPath:
       plugin: "pacer_nav2_controller::PacerController"
-      controller_mode: "soft"          # "hard" per il vincolo rigido — vedi nota di
-                                          # confronto nel vault prima di scegliere in produzione
+      controller_mode: "hard"          # rev. 2026-11-11: vincolo rigido = controllore del paper
+                                          # (Teorema 3, benchmark v4-v8); "soft" solo come confronto, senza garanzia
+                                          # rev. 2026-11-17: "hard_v2" = MPC v2 (CasADi, accelerazione
+                                          # limitata, arresto terminale; nota PACER §3r). In simulazione
+                                          # 80-140 ms medi per ciclo, picchi fino a 0.6 s: misurare sul PC
+                                          # del robot e alzare service_timeout_s se serve.
       n_mpc: 6
       v_max: 1.6
       omega_max: 2.0
@@ -45,6 +49,18 @@ controller_server:
       pedestrian_predictions_topic: "/pacer/pedestrian_predictions"
       q_tupac_topic: "/pacer/q_tupac"
 
+# local_costmap: quello standard di Nav2 (static layer da mappa, obstacle
+# layer da lidar/depth, inflation layer) — e' la sorgente degli ostacoli
+# STATICI che PacerController legge direttamente da costmap_ros_. NON
+# aggiungere i pedoni tracciati da Qualisys come layer del costmap: sono
+# gestiti a parte dal modulo TUPAC (rischio di doppio vincolo/chattering
+# altrimenti, §Sim2Real "ambiguita' statico/dinamico").
+
+# rev. 2026-11-17: filtro di sicurezza (pacer_safety_filter, passive safety). L'uscita del
+# controller_server (o del velocity_smoother, se usato) va rimappata su /cmd_vel_nav, e la base
+# legge /cmd_vel pubblicato dal filtro. Esempio nel launch di Nav2:
+#   remappings=[("cmd_vel", "cmd_vel_nav")]   # per controller_server / velocity_smoother
+#
 # local_costmap/global_costmap: quelli standard di Nav2 (static layer da
 # mappa, obstacle/voxel layer da lidar, inflation layer) — sono la sorgente
 # degli ostacoli STATICI che PacerController legge direttamente da

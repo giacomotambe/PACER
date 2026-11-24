@@ -53,10 +53,25 @@ def quantile_warmstart(pools, n0, alpha_win, delta, h_kind="heavy_tail"):
     return q_warmstart, h
 
 
-def save_calibration(path, pools, n0, q_warmstart):
+def save_calibration(path, pools, n0, q_warmstart, group_pools=None):
+    """group_pools (rev. 2026-11-13, Mondrian): {(g, k): score}, salvati come pool_g{g}_{k}."""
+    group_pools = group_pools or {}
     np.savez(path, n0=n0, q_warmstart_k=np.array(sorted(q_warmstart)),
               q_warmstart_v=np.array([q_warmstart[k] for k in sorted(q_warmstart)]),
-              **{f"pool_{k}": np.array(v) for k, v in pools.items()})
+              **{f"pool_{k}": np.array(v) for k, v in pools.items()},
+              **{f"pool_g{g}_{k}": np.sort(np.asarray(v, dtype=float))
+                 for (g, k), v in group_pools.items()})
+
+
+def load_group_pools(path):
+    """{(g, k): pool} dai campi pool_g{g}_{k}; {} per un D_cal senza gruppi."""
+    d = np.load(path)
+    out = {}
+    for name in d.files:
+        if name.startswith("pool_g"):
+            g, k = name[len("pool_g"):].split("_")
+            out[(int(g), int(k))] = d[name].tolist()
+    return out
 
 
 def load_calibration(path):

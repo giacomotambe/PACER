@@ -7,6 +7,10 @@ string controller_mode
 float64 robot_x
 float64 robot_y
 float64 robot_theta
+# rev. 2026-11-17 (MPC v2, nota PACER §3r): velocita' misurata (odometria) per i limiti di
+# accelerazione; usata solo da controller_mode "hard_v2"
+float64 robot_v
+float64 robot_omega
 float64 goal_x
 float64 goal_y
 int32 n_mpc

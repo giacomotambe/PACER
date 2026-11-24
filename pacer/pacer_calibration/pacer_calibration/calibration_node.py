@@ -16,6 +16,7 @@ l'ULTIMA posizione reale nota di quell'id (dalla cache aggiornata da
 PedestrianTrackArray — Qualisys, identita' certa: nessun controllo di ID
 switch necessario oggi, ma il campo e' gia' predisposto per quando servira',
 §Sim2Real criticita' "continuita' del tracking")."""
+import csv
 import os
 import time
 from collections import defaultdict
@@ -29,13 +30,30 @@ from rclpy.executors import MultiThreadedExecutor
 from pacer_msgs.msg import PedestrianPredictionArray, PedestrianTrackArray, QTupacSnapshot
 from pacer_msgs.srv import TrainPredictor, RecalibrateTupac
 
-from pacer_core.calibration_worker import OnlineCalibrationWorker
+from pacer_core.calibration_trackers import make_tracker
+from pacer_core.mondrian import GROUP_UNKNOWN, n_groups as mondrian_n_groups
 from pacer_core.nonconformity import mahalanobis_score
 from pacer_core.quantile_tupac import HFunction
 from pacer_core import calibration_offline as calib_off
 from pacer_core.social_stgcnn import SocialSTGCNN
 from pacer_core import train_predictor as train_mod
 from pacer_core.sfm_generate_dataset import generate_pool
+
+
+# rev. 2026-11-24: calibratori predefiniti, scelti con calib_preset (config/calibrator.yaml) o dal launch
+# (calib_preset:=...). Ogni preset imposta (calib_method a k=1, calib_method_long a k>=2, alpha_far).
+# Risultati in closed loop: nota PACER §3s, run v48-v50 (stress = persone imprevedibili, alpha_1 = 1.67%).
+CALIB_PRESETS = {
+    # standard dal 2026-11-23 (v50 mxg_B): BET a miscela a k=1, quantile Mondrian a k>=2, alpha 0.1 ai lontani.
+    # miss vicini k=1 sotto stress 1.48%; q vicini k=1 -6/8% rispetto a "conservative".
+    "standard": ("xbet", "static", 0.1),
+    # piu' conservativo (v50 mfbet_B): BET a capitale limitato, una sola puntata. Miss sotto stress 1.29%.
+    "conservative": ("fbet", "static", 0.1),
+    # standard precedente (v44 base): BET a ogni offset, nessun alpha separato per i lontani.
+    "legacy": ("bet", "", -1.0),
+    # baseline senza garanzie anytime, per confronto: quantile fisso di D_cal a ogni offset.
+    "static": ("static", "", -1.0),
+}
 
 
 class CalibrationNode(Node):
@@ -50,14 +68,83 @@ class CalibrationNode(Node):
         self.declare_parameter("predictions_topic", "/pacer/pedestrian_predictions")
         self.declare_parameter("tracks_topic", "/pacer/pedestrian_tracks")
         self.declare_parameter("q_tupac_topic", "/pacer/q_tupac")
+        # rev. 2026-11-04: condizione sperimentale e log degli score
+        # rev. 2026-11-24: calib_preset = standard | conservative | legacy | static | custom.
+        # Con un preset diverso da "custom" i tre parametri sotto (calib_method, calib_method_long, alpha_far)
+        # sono ignorati. calib_preset_override (dal launch, "" = nessuno) ha la precedenza sul file.
+        self.declare_parameter("calib_preset", "standard")
+        self.declare_parameter("calib_preset_override", "")
+        self.declare_parameter("calib_method", "xbet")     # none|static|aci|kl|bet|fbet|xbet (xbet dal 2026-11-23)
+        # rev. 2026-11-23 (run v48/v50, nota §3s): calibratore per gli offset k>=2, che servono solo alla
+        # pianificazione (il Teorema 3 usa k=1). "" = come calib_method; "static" = quantile Mondrian di D_cal
+        # (standard: regioni k>=2 -20/30%, tempo -2/14 s, garanzia k=1 invariata); "aci" sconsigliato (esplode sotto stress).
+        self.declare_parameter("calib_method_long", "static")
+        self.declare_parameter("score_log_csv", "")        # vuoto = nessun log
+        # rev. 2026-11-11: ripartizione di alpha/delta sugli offset (benchmark §3h, run v7).
+        # 'front': il Teorema 3 usa solo k=1 -> alpha_1 = alpha/n_mpc e delta pieno a k=1;
+        # offset k>=2 (vincoli di pianificazione) con alpha_long e delta pieno ciascuno.
+        # 'uniform': alpha/n_mpc e delta/n_mpc per ogni offset (comportamento precedente).
+        self.declare_parameter("alpha_split", "front")      # front | uniform
+        self.declare_parameter("alpha_long", 0.1)   # 0.1 dal 2026-11-19 (nota PACER §3s)
+        # rev. 2026-11-13: Mondrian per distanza dal robot (pacer_core/mondrian.py, nota §3o).
+        # Deve coincidere con mondrian_group di pacer_predictor, che assegna il gruppo.
+        # Un tracker per (gruppo, k), delta/G per gruppo.
+        self.declare_parameter("mondrian_group", "none")   # none | dist
+        self.declare_parameter("d_near", 2.5)
+        # rev. 2026-11-22 (nota §3s, prove A e B):
+        #  sigma_pow: Sigma^g usato quando il nodo ricostruisce D_cal (servizi), uguale a pacer_predictor;
+        #  alpha_far: alpha a k=1 del gruppo 'lontani' (g=0, d >= d_near); < 0 = alpha_1 come i vicini.
+        #  I lontani non raggiungono il robot in un ciclo (0.6 + (2.5+1.6)*0.4 = 2.24 m < d_near):
+        #  la garanzia del Teorema 3 sui vicini non cambia, l'area k=1 cala del 30-45%.
+        self.declare_parameter("sigma_pow", 1.0)
+        self.declare_parameter("sigma_pow_from_k", 1)   # 2 = k=1 invariato (rev. 2026-11-22, v45)
+        self.declare_parameter("alpha_far", -1.0)
 
         self.n_mpc = int(self.get_parameter("n_mpc").value)
         self.alpha = float(self.get_parameter("alpha").value)
         self.delta = float(self.get_parameter("delta").value)
         self.h_param = int(self.get_parameter("h_param").value)
-        self.alpha_win = self.alpha / self.h_param
+        # rischio per offset sull'orizzonte effettivamente pianificato (n_mpc),
+        # come nel benchmark closed-loop; h_param resta per i servizi offline
+        self.alpha_win = self.alpha / self.n_mpc
+        self.alpha_split = str(self.get_parameter("alpha_split").value)
+        self.alpha_long = float(self.get_parameter("alpha_long").value)
+        if self.alpha_split not in ("front", "uniform"):
+            raise ValueError(f"alpha_split sconosciuto: '{self.alpha_split}' (front|uniform)")
+        self.calib_preset = (str(self.get_parameter("calib_preset_override").value)
+                             or str(self.get_parameter("calib_preset").value))
+        if self.calib_preset == "custom":
+            self.calib_method = str(self.get_parameter("calib_method").value)
+            self.calib_method_long = str(self.get_parameter("calib_method_long").value) or self.calib_method
+            self.alpha_far = float(self.get_parameter("alpha_far").value)
+        elif self.calib_preset in CALIB_PRESETS:
+            m1, mlong, af = CALIB_PRESETS[self.calib_preset]
+            self.calib_method, self.calib_method_long, self.alpha_far = m1, (mlong or m1), af
+        else:
+            raise ValueError(f"calib_preset sconosciuto: '{self.calib_preset}' "
+                             f"({' | '.join(list(CALIB_PRESETS) + ['custom'])})")
+        self.mondrian_group = str(self.get_parameter("mondrian_group").value)
+        self.n_groups = mondrian_n_groups(self.mondrian_group)
+        self.d_near = float(self.get_parameter("d_near").value)
+        from pacer_core.predictor_utils import set_sigma_pow
+        set_sigma_pow(self.get_parameter("sigma_pow").value, self.get_parameter("sigma_pow_from_k").value)
+        if self.mondrian_group == "none" and self.calib_preset in ("standard", "conservative"):
+            self.get_logger().warn(f"calib_preset '{self.calib_preset}' e' validato con mondrian_group 'dist' "
+                                   "(alpha_far non ha effetto senza gruppi).")
+        self.get_logger().info(f"calibratore: preset '{self.calib_preset}' -> k=1 '{self.calib_method}', "
+                               f"k>=2 '{self.calib_method_long}', alpha_far {self.alpha_far}")
+        self._n_ungrouped_total = 0
+        self.trackers = None
+        self._rng = np.random.default_rng(0)
+        self._log = None
+        log_path = self.get_parameter("score_log_csv").value
+        if log_path:
+            self._log_f = open(log_path, "a", newline="")
+            self._log = csv.writer(self._log_f)
+            if self._log_f.tell() == 0:
+                self._log.writerow(["t_issue", "k", "ped_id", "score", "q_used", "method", "stamp",
+                                    "group", "d_robot"])
 
-        self.worker = None
         self._latest_pos = {}     # id -> (x,y), dall'ultimo PedestrianTrackArray
         self._mature_at = defaultdict(list)
         self._t_now = 0
@@ -102,54 +189,107 @@ class CalibrationNode(Node):
                 self._latest_pos[t.id] = (p.x, p.y)
 
     def _on_predictions(self, msg):
-        if self.worker is None:
+        if self.trackers is None:
             return   # nessuna calibrazione caricata: niente da aggiornare
 
-        # 1) risolvi le maturazioni schedulate per l'attuale t_now
+        # 1) risolvi le maturazioni schedulate per l'attuale t_now, a batch per
+        #    (offset, issue time): i pedoni simultanei entrano insieme (Sez. IV-B)
         events = self._mature_at.pop(self._t_now, [])
-        for k, pid, mu_k, Sigma_k in events:
+        batches = defaultdict(list)
+        stamp = self.get_clock().now().nanoseconds * 1e-9
+        for k, pid, mu_k, Sigma_k, t_iss, q_used, g, d_rob in events:
             real_xy = self._latest_pos.get(pid)
             if real_xy is None:
                 self._n_censored_total += 1
                 continue
             r = mahalanobis_score(np.array(real_xy), mu_k, Sigma_k)
-            self.worker.submit(k, r)
+            if self._log is not None:
+                self._log.writerow([t_iss, k, pid, f"{r:.6f}", f"{q_used:.6f}",
+                                    self.calib_method, f"{stamp:.3f}", g, f"{d_rob:.3f}"])
+            if g == GROUP_UNKNOWN or g >= self.n_groups:
+                self._n_ungrouped_total += 1     # gruppo ignoto: nessun tracker da aggiornare
+                continue
+            batches[(g, k, t_iss)].append(r)     # batch per (gruppo, offset, issue time)
             self._n_scored_total += 1
+        for (g, k, t_iss), rs in sorted(batches.items(), key=lambda kv: kv[0][2]):
+            self.trackers[(g, k)].update(t_iss, rs)
+        if self._log is not None and events:
+            self._log_f.flush()
+
+        q_now = {(g, k): float(self.trackers[(g, k)].q())
+                 for g in range(self.n_groups) for k in range(1, self.n_mpc + 1)}
 
         # 2) schedula i nuovi eventi da queste predizioni (k=1..n_mpc nel futuro)
         for pred in msg.predictions:
-            if pred.n_steps < self.n_mpc:
-                continue
+            if pred.kind != 0 or pred.n_steps < self.n_mpc:
+                continue   # rev. 2026-11-11: solo le predizioni del modello entrano in TUPAC
             mu = np.array([[p.x, p.y] for p in pred.mu[:self.n_mpc]])
             Sigma = np.array(pred.sigma_flat[:self.n_mpc * 4]).reshape(self.n_mpc, 2, 2)
+            g = int(pred.group) if self.n_groups > 1 else 0
             for k in range(1, self.n_mpc + 1):
-                self._mature_at[self._t_now + k].append((k, pred.id, mu[k - 1], Sigma[k - 1]))
+                q_used = (q_now[(g, k)] if g < self.n_groups else
+                          max(q_now[(gg, k)] for gg in range(self.n_groups)))
+                self._mature_at[self._t_now + k].append(
+                    (k, pred.id, mu[k - 1], Sigma[k - 1], self._t_now, q_used, g, float(pred.d_robot)))
 
         self._t_now += 1
 
-        # 3) pubblica l'ultimo snapshot disponibile (mai un'attesa sul worker)
-        q = self.worker.snapshot_q(self.n_mpc)
+        # 3) pubblica i quantili correnti (aggiornamento sincrono: pochi ms,
+        #    il nodo e' separato dal solver MPC e non lo blocca)
         out = QTupacSnapshot()
         out.header.stamp = self.get_clock().now().to_msg()
         out.k = list(range(1, self.n_mpc + 1))
-        out.q = [q[k] for k in out.k]
-        out.n_processed = self.worker.n_processed
-        out.max_backlog = self.worker.max_backlog
-        st = self.worker.staleness_s
-        out.staleness_mean_ms = float(np.mean(st) * 1000) if st else 0.0
+        # ordine gruppo-maggiore: q[g*n_mpc + k-1] (n_groups = 1: come prima)
+        out.q = [float(self.trackers[(g, k)].q()) for g in range(self.n_groups) for k in out.k]
+        out.n_groups = self.n_groups
+        out.d_near = self.d_near
+        out.n_processed = self._n_scored_total
+        out.max_backlog = 0
+        out.staleness_mean_ms = 0.0
         self.q_pub.publish(out)
 
     def _load_and_start_worker(self, path):
-        n0, pools, q_warmstart = calib_off.load_calibration(path)
-        pool_sorted = {k: list(v) for k, v in pools.items()}
-        s = {k: n0 for k in pools}
-        h = HFunction("heavy_tail")
-        if self.worker is not None:
-            self.worker.stop_and_join()
-        self.worker = OnlineCalibrationWorker(pool_sorted, s, q_warmstart, self.alpha_win,
-                                                 self.delta, h)
-        self.worker.start()
-        self.get_logger().info(f"calibrazione caricata da {path} (n0={n0}), worker avviato.")
+        n0, pools, _ = calib_off.load_calibration(path)
+        gpools = calib_off.load_group_pools(path)        # {(g, k): pool}, {} se assenti
+        trackers = {}
+        for g in range(self.n_groups):
+            for k in range(1, self.n_mpc + 1):
+                marg = np.asarray(pools[k], dtype=float)
+                pool = marg
+                if self.n_groups > 1:
+                    if len(gpools.get((g, k), [])) > 0:
+                        pool = np.asarray(gpools[(g, k)], dtype=float)
+                    elif k == 1:
+                        self.get_logger().warn(
+                            f"D_cal senza pool per il gruppo {g}: uso il pool marginale. Il "
+                            "tracker si adatta online, ma il warm start non distingue i gruppi "
+                            "(rigenera D_cal dalle tracce con robot: dcal_from_tracks --d-near).")
+                # griglia BET: copre il pool marginale e quello di ogni gruppo
+                top = max([float(np.quantile(marg, 0.999))] +
+                          [float(np.quantile(v, 0.999)) for (gg, kk), v in gpools.items()
+                           if kk == k and len(v)])
+                grid = np.linspace(0.0, 2.0 * top, 800)
+                a_k, d_k = self._alpha_delta(k)
+                if k == 1 and g == 0 and self.n_groups > 1 and self.alpha_far > 0:
+                    a_k = self.alpha_far          # lontani (rev. 2026-11-22)
+                m_k = self.calib_method if k == 1 else self.calib_method_long
+                trackers[(g, k)] = make_tracker(m_k, pool, k, self.n_mpc, a_k,
+                                                d_k / self.n_groups, self._rng, grid=grid)
+        self.trackers = trackers
+        self.get_logger().info(
+            f"calibrazione caricata da {path} (n0={n0}), metodo '{self.calib_method}' a k=1, "
+            f"'{self.calib_method_long}' a k>=2, "
+            f"split '{self.alpha_split}': alpha_1 = {self.alpha_win:.4f}, alpha_k>=2 = "
+            f"{self._alpha_delta(2)[0]:.4f}, mondrian '{self.mondrian_group}' "
+            f"({self.n_groups} gruppi, delta/{self.n_groups} per gruppo).")
+
+    def _alpha_delta(self, k):
+        """(alpha_k, delta passato a make_tracker). Interleaved divide delta per
+        n_mpc*k: con 'front' si passa delta*n_mpc, cosi' ogni offset ha delta pieno
+        (diviso solo tra le sue k fasi), come nel benchmark (PACER_SPLIT=front)."""
+        if self.alpha_split == "uniform":
+            return self.alpha_win, self.delta
+        return (self.alpha_win if k == 1 else self.alpha_long), self.delta * self.n_mpc
 
     # ---------- servizi on-demand ----------
 
@@ -232,8 +372,8 @@ def main(args=None):
     try:
         executor.spin()
     finally:
-        if node.worker is not None:
-            node.worker.stop_and_join()
+        if node._log is not None:
+            node._log_f.close()
         node.destroy_node()
         rclpy.shutdown()
 

@@ -1,0 +1,22 @@
+# Scelta del calibratore conformal (rev. 2026-11-24). Caricato da pacer_bringup.launch.py DOPO pacer_params.yaml,
+# quindi questi valori hanno la precedenza. Si puo' anche scegliere al lancio senza toccare il file:
+#   ros2 launch pacer_bringup pacer_bringup.launch.py calib_preset:=conservative
+#   ros2 launch pacer_bringup pacer_bringup.launch.py calibrator_file:=/percorso/mio_calibratore.yaml
+#
+# Preset (risultati in closed loop, simulazione con 20 persone; stress = persone imprevedibili;
+# alpha_1 = 1.67% = rischio ammesso per i pedoni vicini a k=1, su cui poggia la garanzia):
+#   standard      k=1 xbet (BET a miscela), k>=2 static, alpha_far 0.1   miss vicini k=1 sotto stress 1.48%
+#   conservative  k=1 fbet (BET a capitale limitato), k>=2 static, 0.1    miss 1.29%, regioni k=1 ~7% piu' grandi
+#   legacy        bet a ogni offset, nessun alpha_far (standard precedente, v44)
+#   static        quantile fisso di D_cal a ogni offset (baseline senza garanzia anytime)
+#   custom        usa calib_method / calib_method_long / alpha_far qui sotto
+#
+# Metodi disponibili per calib_method e calib_method_long:
+#   none | static | aci | kl | bet | fbet | xbet      ("" in calib_method_long = come calib_method)
+# I preset standard e conservative presuppongono mondrian_group: "dist" (pacer_params.yaml).
+pacer_calibration:
+  ros__parameters:
+    calib_preset: "standard"
+    calib_method: "xbet"          # solo con calib_preset: "custom"
+    calib_method_long: "static"   # solo con calib_preset: "custom"
+    alpha_far: 0.1                # solo con calib_preset: "custom"; < 0 = come i vicini (alpha_1)

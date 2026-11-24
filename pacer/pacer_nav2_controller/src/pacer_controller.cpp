@@ -26,7 +26,7 @@ void PacerController::configure(
   logger_ = node->get_logger();
 
   nav2_util::declare_parameter_if_not_declared(
-    node, plugin_name_ + ".controller_mode", rclcpp::ParameterValue("soft"));
+    node, plugin_name_ + ".controller_mode", rclcpp::ParameterValue("hard"));  // rev. 2026-11-11: hard = controllore del paper (Teorema 3)
   nav2_util::declare_parameter_if_not_declared(
     node, plugin_name_ + ".n_mpc", rclcpp::ParameterValue(6));
   nav2_util::declare_parameter_if_not_declared(
@@ -230,7 +230,7 @@ std::vector<pacer_msgs::msg::StaticObstacle> PacerController::extractStaticObsta
 
 geometry_msgs::msg::TwistStamped PacerController::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & pose,
-  const geometry_msgs::msg::Twist & /*velocity*/,
+  const geometry_msgs::msg::Twist & velocity,
   nav2_core::GoalChecker * /*goal_checker*/)
 {
   geometry_msgs::msg::TwistStamped cmd;
@@ -286,6 +286,9 @@ geometry_msgs::msg::TwistStamped PacerController::computeVelocityCommands(
   request->robot_x = pose.pose.position.x;
   request->robot_y = pose.pose.position.y;
   request->robot_theta = tf2::getYaw(pose.pose.orientation);
+  // rev. 2026-11-17 (hard_v2): velocita' misurata (odometria) per i limiti di accelerazione
+  request->robot_v = velocity.linear.x;
+  request->robot_omega = velocity.angular.z;
   request->goal_x = local_goal.pose.position.x;
   request->goal_y = local_goal.pose.position.y;
   request->n_mpc = n_mpc_;
@@ -351,15 +354,22 @@ geometry_msgs::msg::TwistStamped PacerController::computeVelocityCommands(
   // pacer_core.unicycle_nmpc[_soft].solve_step*: soft aggiorna SEMPRE,
   // hard solo se lo status e' "optimal" (altrimenti la sequenza
   // pianificata potrebbe non essere una buona base di partenza).
-  bool keep_warm = (controller_mode_ == "soft") || (response->status == "optimal");
+  bool keep_warm = (controller_mode_ == "soft") || (response->status == "optimal") ||
+                   (response->status == "deadline_prev") || (response->status == "prev");  // piano precedente verificato
   if (keep_warm && static_cast<int>(response->u_full_flat.size()) == 2 * n_mpc_) {
     std::vector<double> shifted(2 * n_mpc_);
     for (int i = 0; i < n_mpc_ - 1; ++i) {
       shifted[2 * i] = response->u_full_flat[2 * (i + 1)];
       shifted[2 * i + 1] = response->u_full_flat[2 * (i + 1) + 1];
     }
-    shifted[2 * (n_mpc_ - 1)] = response->u_full_flat[2 * (n_mpc_ - 1)];
-    shifted[2 * (n_mpc_ - 1) + 1] = response->u_full_flat[2 * (n_mpc_ - 1) + 1];
+    if (controller_mode_ == "hard_v2") {
+      // v2: il piano traslato termina con lo stop (fattibilita' ricorsiva, nota PACER §3r)
+      shifted[2 * (n_mpc_ - 1)] = 0.0;
+      shifted[2 * (n_mpc_ - 1) + 1] = 0.0;
+    } else {
+      shifted[2 * (n_mpc_ - 1)] = response->u_full_flat[2 * (n_mpc_ - 1)];
+      shifted[2 * (n_mpc_ - 1) + 1] = response->u_full_flat[2 * (n_mpc_ - 1) + 1];
+    }
     u_warm_ = shifted;
   } else {
     u_warm_.clear();

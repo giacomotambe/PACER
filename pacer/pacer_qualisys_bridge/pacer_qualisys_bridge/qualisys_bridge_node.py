@@ -23,7 +23,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSPresetProfiles
 from collections import deque
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
 
 from pacer_msgs.msg import PedestrianTrack, PedestrianTrackArray
 
@@ -45,10 +45,22 @@ class QualisysBridgeNode(Node):
         self.declare_parameter("dt_out", 0.4)
         self.declare_parameter("occlusion_timeout_s", 1.0)
         self.declare_parameter("world_frame", "map")
+        # rev. 2026-11-04: log CSV a dt_out di pedoni e robot (verita' mocap)
+        # per D_cal reale (shadow mode) e per l'analisi offline delle prove
+        self.declare_parameter("tracks_log_csv", "")
+        self.declare_parameter("robot_body_name", "")
+        # rev. 2026-11-11: pubblica anche gli storici incompleti (< obs_len).
+        # Prima venivano scartati e il pedone era INVISIBILE all'MPC per i
+        # primi obs_len*dt_out = 3.2 s dopo l'ingresso o un'occlusione.
+        self.declare_parameter("publish_partial", True)
+        # rev. 2026-11-13: posa del robot (rigid body robot_body_name) pubblicata a
+        # dt_out, usata da pacer_predictor per il gruppo Mondrian per distanza
+        self.declare_parameter("robot_pose_topic", "/pacer/robot_pose")
 
         self.pedestrian_ids = [i for i in
                                  self.get_parameter("pedestrian_ids").value if i]
         self.obs_len = int(self.get_parameter("obs_len").value)
+        self.publish_partial = bool(self.get_parameter("publish_partial").value)
         self.dt_out = float(self.get_parameter("dt_out").value)
         self.occlusion_timeout_s = float(self.get_parameter("occlusion_timeout_s").value)
         self.world_frame = self.get_parameter("world_frame").value
@@ -65,6 +77,16 @@ class QualisysBridgeNode(Node):
                 "messaggio effettivamente pubblicato dal tuo driver Qualisys.")
 
         self._latest_pose = {}      # id -> (x,y,stamp_sec)
+        self._robot_name = self.get_parameter("robot_body_name").value
+        self._tick = 0
+        self._log = None
+        log_path = self.get_parameter("tracks_log_csv").value
+        if log_path:
+            import csv
+            self._log_f = open(log_path, "a", newline="")
+            self._log = csv.writer(self._log_f)
+            if self._log_f.tell() == 0:
+                self._log.writerow(["tick", "stamp", "id", "x", "y", "fresh"])
         self._history = {i: deque(maxlen=self.obs_len) for i in self.pedestrian_ids}
 
         if _HAVE_MOCAP_MSGS:
@@ -72,6 +94,8 @@ class QualisysBridgeNode(Node):
                                        QoSPresetProfiles.SENSOR_DATA.value)
 
         self.pub = self.create_publisher(PedestrianTrackArray, out_topic, 10)
+        self.robot_pub = (self.create_publisher(PointStamped, self.get_parameter("robot_pose_topic").value, 10)
+                          if self._robot_name else None)
         self.timer = self.create_timer(self.dt_out, self._on_sample_tick)
 
         self.get_logger().info(
@@ -83,13 +107,30 @@ class QualisysBridgeNode(Node):
         now = self.get_clock().now().nanoseconds * 1e-9
         for rb in msg.rigidbodies:
             name = rb.rigid_body_name
-            if name not in self._history:
-                continue   # non e' uno dei pedoni configurati (es. il robot stesso)
+            if name not in self._history and name != self._robot_name:
+                continue   # non e' uno dei pedoni configurati ne' il robot
             p = rb.pose.pose.position if hasattr(rb.pose, "pose") else rb.pose.position
             self._latest_pose[name] = (float(p.x), float(p.y), now)
 
     def _on_sample_tick(self):
         now = self.get_clock().now().nanoseconds * 1e-9
+        if self._log is not None:
+            for name in self.pedestrian_ids + ([self._robot_name] if self._robot_name else []):
+                e = self._latest_pose.get(name)
+                if e is not None:
+                    fresh = int(now - e[2] <= self.occlusion_timeout_s)
+                    self._log.writerow([self._tick, f"{now:.3f}", name, f"{e[0]:.4f}",
+                                        f"{e[1]:.4f}", fresh])
+            self._log_f.flush()
+        self._tick += 1
+        if self.robot_pub is not None:
+            e = self._latest_pose.get(self._robot_name)
+            if e is not None and now - e[2] <= self.occlusion_timeout_s:
+                rp = PointStamped()
+                rp.header.stamp = self.get_clock().now().to_msg()
+                rp.header.frame_id = self.world_frame
+                rp.point = Point(x=e[0], y=e[1], z=0.0)
+                self.robot_pub.publish(rp)
         for pid in self.pedestrian_ids:
             entry = self._latest_pose.get(pid)
             if entry is None:
@@ -109,8 +150,8 @@ class QualisysBridgeNode(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.world_frame
         for pid, hist in self._history.items():
-            if len(hist) < self.obs_len:
-                continue   # storico non ancora completo, non pubblicabile (§8:12)
+            if not hist or (len(hist) < self.obs_len and not self.publish_partial):
+                continue   # storico vuoto (o incompleto con publish_partial=false)
             track = PedestrianTrack()
             track.id = pid
             track.history = [Point(x=float(x), y=float(y), z=0.0) for x, y in hist]

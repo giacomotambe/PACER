@@ -92,6 +92,40 @@ source install/setup.bash
 3. **Start the TUPAC module**: `ros2 launch pacer_bringup pacer_bringup.launch.py params_file:=<pacer_params.yaml with model_path/calibration_path filled in>`
 4. **Start Nav2** with a `nav2_params.yaml` that includes the snippet in `pacer_bringup/config/nav2_params_snippet.yaml` (controller_server -> `PacerController`).
 
+### Choosing the calibrator (config file)
+
+The conformal calibrator is selected in its own file,
+`pacer_bringup/config/calibrator.yaml`. The launch file loads it after
+`pacer_params.yaml`, so its values take precedence.
+
+```yaml
+pacer_calibration:
+  ros__parameters:
+    calib_preset: "standard"      # standard | conservative | legacy | static | custom
+    calib_method: "xbet"          # only with custom: none|static|aci|kl|bet|fbet|xbet
+    calib_method_long: "static"   # only with custom: calibrator for k>=2 ("" = same as k=1)
+    alpha_far: 0.1                # only with custom: alpha at k=1 for people farther than d_near
+```
+
+| preset | k=1 (safety guarantee) | k>=2 (planning only) | far group at k=1 |
+|---|---|---|---|
+| `standard` (default) | `xbet`, mixture-of-bets BET with capped capital | `static`, Mondrian quantile of D_cal | alpha 0.1 |
+| `conservative` | `fbet`, capped BET with a single bet | `static` | alpha 0.1 |
+| `legacy` | `bet` at every offset (previous standard) | `bet` | same as near group |
+| `static` | split-conformal quantile, no anytime guarantee (baseline) | `static` | same as near group |
+
+The closed-loop results behind each preset come from simulation with 20
+people, with "stress" meaning unpredictable pedestrians. α₁ = 1.67% is the
+risk allowed for near pedestrians at k=1, the quantity the guarantee rests on.
+- `standard`: near-group miss at k=1 under stress is 1.48%, below α₁.
+- `conservative`: 1.29%, with k=1 regions about 7% larger.
+- `standard` and `conservative` assume `mondrian_group: "dist"`.
+
+You can also pick a preset at launch time, or point to a different file:
+
+    ros2 launch pacer_bringup pacer_bringup.launch.py calib_preset:=conservative
+    ros2 launch pacer_bringup pacer_bringup.launch.py calibrator_file:=/path/my_calibrator.yaml
+
 Recommended rollout on real hardware: shadow mode -> soft at low speed ->
 hard constraint, exactly as in vault note Sim2Real §4 — not automated
 here, it is an operating procedure for whoever uses this code.

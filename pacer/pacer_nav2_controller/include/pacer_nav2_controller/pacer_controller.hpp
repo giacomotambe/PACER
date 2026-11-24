@@ -99,7 +99,7 @@ protected:
 
   // Parametri (§Sim2Real: stessi valori calibrati/verificati in simulazione,
   // esposti qui come parametri ROS2 invece che costanti hard-coded)
-  std::string controller_mode_;      // "hard" o "soft"
+  std::string controller_mode_;      // "hard", "hard_v2" (CasADi, nota §3r) o "soft"
   int n_mpc_{6};
   double v_max_{1.6};
   double omega_max_{2.0};

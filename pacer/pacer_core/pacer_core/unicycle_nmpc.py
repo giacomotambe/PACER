@@ -68,7 +68,7 @@ def _ellipse_constraint_values(u_flat, x0, N, obstacles):
     return np.concatenate(vals) if vals else np.array([1.0])  # nessun ostacolo -> sempre feasible
 
 
-def _feasible(u_full, x0, N, obstacles, tol):
+def _feasible(u_full, x0, N, obstacles, tol, first_step_only=False):
     """Verifica ESPLICITA del vincolo rigido sulla soluzione candidata — non ci
     si fida del solo flag res.success di SLSQP (che riflette convergenza KKT,
     non garantisce soddisfacimento del vincolo entro una tolleranza stretta,
@@ -77,13 +77,16 @@ def _feasible(u_full, x0, N, obstacles, tol):
     if not obstacles:
         return True, float("inf")
     margins = _ellipse_constraint_values(u_full.ravel(), x0, N, obstacles)
+    if first_step_only:
+        # solo offset k=1: l'unico nella garanzia per-istante (Teorema 3, rev. 2026-11-04)
+        margins = margins.reshape(len(obstacles), N)[:, 0]
     m = float(np.min(margins))
     return m >= -tol, m
 
 
 def solve_step(x0, goal, obstacles, N, v_max, omega_max, u_warm=None,
                 weights=(6.0, 0.15, 0.02, 0.05), feas_tol=1e-4,
-                static_obstacles=None, w_static=0.0):
+                static_obstacles=None, w_static=0.0, evasive=False):
     """Risolve un ciclo di NMPC. Ritorna (u0, ok, u_full, margin, status):
     u0=(v,omega) del primo passo da applicare, u_full=(N,2) la sequenza
     pianificata (warm start del ciclo successivo), margin=min margine del
@@ -121,6 +124,37 @@ def solve_step(x0, goal, obstacles, N, v_max, omega_max, u_warm=None,
             return u_full_opt[0].copy(), True, u_full_opt, margin, "optimal"
 
     u_zero = np.zeros((N, 2))
-    ok_zero, margin_zero = _feasible(u_zero, x0, N, obstacles, feas_tol)
-    status = "fallback_stop" if ok_zero else "infeasible"
-    return np.array([0.0, 0.0]), ok_zero, u_zero, margin_zero, status
+    ok_zero, margin_zero = _feasible(u_zero, x0, N, obstacles, feas_tol, first_step_only=True)
+    if ok_zero or not evasive:
+        status = "fallback_stop" if ok_zero else "infeasible"
+        return np.array([0.0, 0.0]), ok_zero, u_zero, margin_zero, status
+    return _evasive_first_step(x0, goal, obstacles, N, v_max, omega_max, feas_tol)
+
+
+def _evasive_first_step(x0, goal, obstacles, N, v_max, omega_max, tol, n_v=9, n_om=13):
+    """Fallback evasivo (rev. 2026-11-04): quando ne' SLSQP ne' lo stop
+    soddisfano il vincolo a k=1, cerca su una griglia di prime azioni
+    (v, omega) una che lo soddisfi (status "fallback_evasive", la piu' vicina
+    al goal); se nessuna lo soddisfa applica quella con margine normalizzato
+    massimo e segnala comunque "infeasible". Solo k=1: e' l'unico offset
+    nella garanzia per-istante."""
+    best_ok, best_bad = None, None
+    for v in np.linspace(0.0, v_max, n_v):
+        for om in np.linspace(-omega_max, omega_max, n_om):
+            u = np.zeros((N, 2))
+            u[0] = (v, om)
+            g = _ellipse_constraint_values(u.ravel(), x0, N, obstacles).reshape(len(obstacles), N)[:, 0]
+            q2 = np.array([o["q2"][0] for o in obstacles])
+            m_norm = float(np.min(g / np.maximum(q2, 1e-9)))
+            p1 = rollout(x0, u[:1])[0]
+            if np.min(g) >= -tol:
+                d = float(np.linalg.norm(p1 - goal))
+                if best_ok is None or d < best_ok[0]:
+                    best_ok = (d, u, float(np.min(g)))
+            elif best_bad is None or m_norm > best_bad[0]:
+                best_bad = (m_norm, u, float(np.min(g)))
+    if best_ok is not None:
+        _, u, m = best_ok
+        return u[0].copy(), True, u, m, "fallback_evasive"
+    _, u, m = best_bad
+    return u[0].copy(), False, u, m, "infeasible"

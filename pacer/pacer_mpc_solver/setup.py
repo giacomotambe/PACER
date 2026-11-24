@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mpc_solver_node = pacer_mpc_solver.mpc_solver_node:main',
+            'safety_filter_node = pacer_mpc_solver.safety_filter_node:main',
         ],
     },
 )

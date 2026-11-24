@@ -10,6 +10,9 @@
   <depend>rclpy</depend>
   <depend>pacer_msgs</depend>
   <depend>pacer_core</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <!-- hard_v2 richiede casadi: pip install casadi (nessuna chiave rosdep standard) -->
 
   <export>
     <build_type>ament_python</build_type>
