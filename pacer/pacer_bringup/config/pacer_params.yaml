@@ -13,14 +13,14 @@ pacer_qualisys_bridge:
     dt_out: 0.4
     occlusion_timeout_s: 1.0
     world_frame: "map"
-    tracks_log_csv: ""          # rev. 2026-11-04: es. "/data/run_XX_tracks.csv" (verita' mocap a dt_out)
-    robot_body_name: ""         # rigid body Qualisys del robot, loggato con i pedoni
+    tracks_log_csv: ""          # di solito dal launch: run_name:=... -> /home/ros/bags/runs/<run>/tracks.csv
+    robot_body_name: ""         # rigid body del robot in QTM; di solito dal launch: robot_body:=<nome>
     publish_partial: true       # rev. 2026-11-11: pubblica anche storici < obs_len (pedoni appena entrati/riapparsi)
     robot_pose_topic: "/pacer/robot_pose"   # rev. 2026-11-13: posa del robot (richiede robot_body_name), per Mondrian
 
 pacer_predictor:
   ros__parameters:
-    model_path: ""   # da impostare: pesi .pt allenati (servizio TrainPredictor)
+    model_path: "/models/predictor_sim.pt"   # rev. 2026-11-24: predittore incluso nel repo (models/, montato in /models)
     obs_len: 8
     pred_len: 12
     hidden_dim: 32
@@ -46,7 +46,7 @@ pacer_predictor:
 
 pacer_calibration:
   ros__parameters:
-    calibration_path: ""   # da impostare: file .npz (servizio RecalibrateTupac)
+    calibration_path: "/models/cal_sim.npz"   # rev. 2026-11-24: D_cal simulato incluso; sostituire con quello reale (tools/make_dcal_real.sh)
     # calibratore (calib_preset, calib_method, ...): in config/calibrator.yaml (rev. 2026-11-24)
     n_mpc: 6
     alpha: 0.1
@@ -55,7 +55,7 @@ pacer_calibration:
     predictions_topic: "/pacer/pedestrian_predictions"
     tracks_topic: "/pacer/pedestrian_tracks"
     q_tupac_topic: "/pacer/q_tupac"
-    score_log_csv: ""           # es. "/data/run_XX_scores.csv"
+    score_log_csv: ""           # di solito dal launch: run_name:=... -> .../scores.csv
     alpha_split: "front"        # rev. 2026-11-11: front (alpha/n_mpc a k=1, alpha_long a k>=2, delta pieno per offset) | uniform
     alpha_long: 0.1             # alpha per gli offset k>=2 con alpha_split=front (0.1 dal 2026-11-19, nota §3s)
     mondrian_group: "dist"      # rev. 2026-11-13: un tracker per (gruppo, k); uguale a pacer_predictor
@@ -102,7 +102,7 @@ pacer_mpc_solver:
     v2_w_side: 0.5
     v2_w_front: 1.0
     v2_w_path: 0.5
-    status_log_csv: ""          # es. "/data/run_XX_status.csv" (stato del solver per ciclo)
+    status_log_csv: ""          # di solito dal launch: run_name:=... -> .../mpc_status.csv
 
 pacer_safety_filter:
   ros__parameters:
@@ -120,7 +120,7 @@ pacer_safety_filter:
     tracks_timeout_s: 0.6           # tracce piu' vecchie -> frenata (fail-safe)
     enabled: true
     away_only: true             # rev. 2026-11-22: stop solo se il moto avvicina la persona; rotazione a robot fermo
-    log_csv: ""                     # es. "/data/run_XX_safety.csv"
+    log_csv: ""                     # di solito dal launch: run_name:=... -> .../safety.csv
 
 pacer_pedestrian_filter:
   ros__parameters:

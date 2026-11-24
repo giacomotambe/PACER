@@ -31,18 +31,17 @@ services:
       # (one bind mount per top-level source folder).
       - ./pacer:/home/ros/src/pacer
       - ./mocap4ros2_qualisys:/home/ros/src/mocap4ros2_qualisys
+      # tools/ (make_dcal_real.sh, mpc_jit_check.py, offline tests); COLCON_IGNORE inside
+      - ./tools:/home/ros/src/tools
       # X11 + DRI render nodes, for rviz2/plotjuggler.
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ~/.Xauthority:/tmp/.Xauthority:ro
       - /dev/dri:/dev/dri
       # rosbag2 recordings from the Qualisys experimental campaign.
       - ./bags:/home/ros/bags
-      # model_path / calibration_path outputs from TrainPredictor /
-      # RecalibrateTupac (see README "Usage") — point params files there.
-      - pacer_models:/models
+      # trained predictor and D_cal (models/ on the host: copy files in, no docker cp)
+      - ./models:/models
     stdin_open: true
     tty: true
     command: bash
 
-volumes:
-  pacer_models:

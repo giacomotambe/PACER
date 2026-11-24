@@ -83,6 +83,47 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
+## Quick start on the real robot (NUC)
+
+Everything below runs inside the container. The defaults are ready to use:
+the predictor and a simulated D_cal ship in `models/`, the `standard` calibrator
+is selected, and the safety filter has `away_only: true`.
+
+1. **Once:** clone the repo, put the NUC on the Qualisys LAN
+   (see `mocap4ros2_qualisys/README.md`) and build the image:
+
+       docker compose -f docker-compose.nuc.yml build
+       docker compose -f docker-compose.nuc.yml up -d
+
+2. **In `pacer/pacer_bringup/config/pacer_params.yaml`:**
+   - `pedestrian_ids` must list the people's rigid-body names in QTM;
+   - check the robot limits (`v2_a_acc`, `v2_a_dec`, `a_dec` of the safety
+     filter) against the real car.
+3. **Shell 1, the Qualisys driver:**
+
+       docker compose -f docker-compose.nuc.yml exec pacer bash
+       ros2 launch qualisys_driver qualisys.launch.py
+
+4. **Shell 2, PACER** (`robot_body` is the car's rigid-body name in QTM;
+   `run_name:=auto` writes the CSV logs to `./bags/runs/run_<date>/`):
+
+       ros2 launch pacer_bringup pacer_bringup.launch.py robot_body:=omnicar run_name:=auto
+
+   Then start Nav2 for the car, with the snippet in
+   `pacer_bringup/config/nav2_params_snippet.yaml`. The controller output goes
+   to `/cmd_vel_nav`; the safety filter publishes `/cmd_vel`.
+5. **Real D_cal:**
+   - Record a run with the car moving among people (teleoperated or on a
+     mission, `run_name:=auto`).
+   - Build the D_cal, then relaunch with it:
+
+         /home/ros/src/tools/make_dcal_real.sh run_<date> omnicar      # -> /models/cal_real.npz
+         ros2 launch pacer_bringup pacer_bringup.launch.py robot_body:=omnicar run_name:=auto calibration:=/models/cal_real.npz
+
+Launch arguments: `robot_body`, `run_name`, `calib_preset`, `calibration`,
+`model`, `pedestrian_filter` (`false` if the car has no lidar), `params_file`,
+`calibrator_file`, `log_dir`.
+
 ## Usage
 
 1. **On-demand training** of the predictor (service, never automatic):
@@ -112,7 +153,7 @@ docker compose -f docker-compose.nuc.yml exec pacer bash
 The PACER nodes never use the GPU; models are loaded with
 `map_location="cpu"`. The only thing to tune on the NUC is the MPC time
 budget:
-- measure the solve time with `tools/mpc_jit_check.py`;
+- measure the solve time with `python3 /home/ros/src/tools/mpc_jit_check.py` (inside the container);
 - if needed, set `v2_jit: true` and adjust `v2_t_budget` / `v2_deadline` in
   `pacer_params.yaml`.
 

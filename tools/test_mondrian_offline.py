@@ -328,8 +328,7 @@ def test_dcal_from_tracks():
             V[(P < 0) | (P > 10)] *= -1
             for i in range(4):
                 w.writerow([tick, f"{tick * 0.4:.1f}", f"ped{i}", f"{P[i, 0]:.3f}", f"{P[i, 1]:.3f}", 1])
-    model = os.path.join(HERE, "..", "..", "pacer-tupac-code", "13_closed_loop_benchmark", "results",
-                         "predictor_open_field.pt")
+    model = os.path.join(HERE, "..", "models", "predictor_sim.pt")     # incluso nel repo (rev. 2026-11-24)
     if not os.path.exists(model):
         print("\n[3] D_cal da tracce: predittore non trovato, salto")
         return

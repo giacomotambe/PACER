@@ -1,7 +1,13 @@
 bags/*
+!bags/.gitkeep
 build/
 install/
 log/
 **/__pycache__/
 **/*.pyc
 .claude/
+models/*
+!models/.gitkeep
+!models/README.md
+!models/predictor_sim.pt
+!models/cal_sim.npz

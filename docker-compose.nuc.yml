@@ -1,5 +1,5 @@
 # PACER on an Intel NUC (or any PC without an NVIDIA GPU), rev. 2026-11-24.
-# Same container name, same bind mounts and same volumes as docker-compose.yml:
+# Same container name, same bind mounts as docker-compose.yml:
 # only the image is CPU-only (ubuntu:22.04 base, CPU torch wheels) and the NVIDIA
 # runtime/GPU reservation is gone. Usage:
 #   docker compose -f docker-compose.nuc.yml build
@@ -24,11 +24,14 @@ services:
     volumes:
       - ./pacer:/home/ros/src/pacer
       - ./mocap4ros2_qualisys:/home/ros/src/mocap4ros2_qualisys
+      # tools/ (make_dcal_real.sh, mpc_jit_check.py, offline tests); COLCON_IGNORE inside
+      - ./tools:/home/ros/src/tools
       # X11 for rviz2 (only if a monitor/X session is available; harmless otherwise)
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ~/.Xauthority:/tmp/.Xauthority:ro
       - ./bags:/home/ros/bags
-      - pacer_models:/models
+      # trained predictor and D_cal (models/ on the host: copy files in, no docker cp)
+      - ./models:/models
     # Intel iGPU render node (rviz2 with Mesa). Comment out if /dev/dri does not exist.
     devices:
       - /dev/dri:/dev/dri
@@ -37,5 +40,3 @@ services:
     command: bash
     restart: unless-stopped
 
-volumes:
-  pacer_models:
