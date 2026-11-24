@@ -92,6 +92,33 @@ source install/setup.bash
 3. **Start the TUPAC module**: `ros2 launch pacer_bringup pacer_bringup.launch.py params_file:=<pacer_params.yaml with model_path/calibration_path filled in>`
 4. **Start Nav2** with a `nav2_params.yaml` that includes the snippet in `pacer_bringup/config/nav2_params_snippet.yaml` (controller_server -> `PacerController`).
 
+### Running on an Intel NUC (no NVIDIA GPU)
+
+`docker-compose.yml` needs an NVIDIA GPU and the NVIDIA Container Toolkit.
+On a NUC, use `docker-compose.nuc.yml` instead.
+- **What is the same:** container name (`pacer_tupac`), bind mounts (`./pacer`,
+  `./mocap4ros2_qualisys`, `./jo_*`, `./bags`) and the `pacer_models` volume.
+- **What changes:**
+  - the image is CPU-only (`ubuntu:22.04` base, CPU torch wheels, tag
+    `pacer-tupac-code-ros:nuc`);
+  - the container restarts on boot (`restart: unless-stopped`).
+
+```bash
+docker compose -f docker-compose.nuc.yml build      # once (or after Dockerfile changes)
+docker compose -f docker-compose.nuc.yml up -d
+docker compose -f docker-compose.nuc.yml exec pacer bash
+```
+
+The PACER nodes never use the GPU; models are loaded with
+`map_location="cpu"`. The only thing to tune on the NUC is the MPC time
+budget:
+- measure the solve time with `tools/mpc_jit_check.py`;
+- if needed, set `v2_jit: true` and adjust `v2_t_budget` / `v2_deadline` in
+  `pacer_params.yaml`.
+
+Gazebo simulation (`pacer_sim`) runs on Mesa (Intel iGPU, `/dev/dri`), but is
+meant for the workstation.
+
 ### Qualisys driver
 
 `mocap4ros2_qualisys/` is aligned with

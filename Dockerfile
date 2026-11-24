@@ -6,7 +6,13 @@
 # rendering can use the GPU too; requires the NVIDIA Container Toolkit on the
 # host (see docker-compose.yml). Ubuntu 22.04 (jammy) base, not 24.04: Humble
 # only ships binary packages for jammy — mocap4ros2_qualisys requires Humble.
-FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
+#
+# NUC / any PC without an NVIDIA GPU (rev. 2026-11-24): build with
+#   BASE_IMAGE=ubuntu:22.04  TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+# (docker-compose.nuc.yml does this). The PACER nodes never use the GPU (models are
+# loaded with map_location="cpu"); only gz-sim rendering benefits from it.
+ARG BASE_IMAGE=nvidia/cuda:12.6.3-runtime-ubuntu22.04
+FROM ${BASE_IMAGE}
 
 ARG ROS_DISTRO=humble
 ARG USERNAME=ros
@@ -48,8 +54,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # rosdep doesn't pull in a mismatched build; see --skip-keys below.
 # (no --break-system-packages: that PEP 668 guard doesn't exist before
 # Ubuntu 24.04's pip, and jammy's system pip predates the flag entirely.)
+# TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu for the NUC (docker-compose.nuc.yml).
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
 RUN pip3 install --no-cache-dir \
-        torch --index-url https://download.pytorch.org/whl/cu126
+        torch --index-url ${TORCH_INDEX_URL}
 
 WORKDIR /home/${USERNAME}
 COPY pacer ./src/pacer
