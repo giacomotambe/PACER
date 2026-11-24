@@ -85,6 +85,8 @@ source install/setup.bash
 
 ## Quick start on the real robot (NUC)
 
+**Step-by-step procedure for the lab (in Italian): [RUNBOOK.md](RUNBOOK.md).**
+
 Everything below runs inside the container. The defaults are ready to use:
 the predictor and a simulated D_cal ship in `models/`, the `standard` calibrator
 is selected, and the safety filter has `away_only: true`.
