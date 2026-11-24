@@ -27,7 +27,9 @@
 #include <map>
 #include <string>
 #include <memory>
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
@@ -67,6 +69,8 @@ public:
   using CallbackReturnT =
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
+  ~QualisysDriver();
+
   CallbackReturnT on_configure(const rclcpp_lifecycle::State & state);
   CallbackReturnT on_activate(const rclcpp_lifecycle::State & state);
   CallbackReturnT on_deactivate(const rclcpp_lifecycle::State & state);
@@ -80,7 +84,9 @@ public:
   void initParameters();
 
 private:
-  std::shared_ptr<rclcpp::TimerBase> timer_;
+  std::thread receive_thread_;
+  std::atomic<bool> running_{false};
+  void stop_receive_thread();
 
   void process_packet(CRTPacket * const);
 

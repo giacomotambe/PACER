@@ -92,6 +92,17 @@ source install/setup.bash
 3. **Start the TUPAC module**: `ros2 launch pacer_bringup pacer_bringup.launch.py params_file:=<pacer_params.yaml with model_path/calibration_path filled in>`
 4. **Start Nav2** with a `nav2_params.yaml` that includes the snippet in `pacer_bringup/config/nav2_params_snippet.yaml` (controller_server -> `PacerController`).
 
+### Qualisys driver
+
+`mocap4ros2_qualisys/` is aligned with
+[qualisys_docker](https://github.com/giacomotambe/qualisys_docker):
+- the driver streams every QTM frame (full capture rate, not 10 Hz);
+- the driver parameters use the right port key;
+- `scripts/record_mocap.sh` records rigid bodies into `./bags`.
+
+It runs in the same container with the same volumes, so no extra image is
+needed. See `mocap4ros2_qualisys/README.md`.
+
 ### Choosing the calibrator (config file)
 
 The conformal calibrator is selected in its own file,

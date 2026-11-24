@@ -1,0 +1,126 @@
+diff --git a/qualisys_driver/include/qualisys_driver/qualisys_driver.hpp b/qualisys_driver/include/qualisys_driver/qualisys_driver.hpp
+index 43e1fc6..b6801c3 100644
+--- a/qualisys_driver/include/qualisys_driver/qualisys_driver.hpp
++++ b/qualisys_driver/include/qualisys_driver/qualisys_driver.hpp
+@@ -27,7 +27,9 @@
+ #include <map>
+ #include <string>
+ #include <memory>
++#include <atomic>
+ #include <chrono>
++#include <thread>
+ #include <vector>
+ 
+ #include "rclcpp/rclcpp.hpp"
+@@ -67,6 +69,8 @@ public:
+   using CallbackReturnT =
+     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+ 
++  ~QualisysDriver();
++
+   CallbackReturnT on_configure(const rclcpp_lifecycle::State & state);
+   CallbackReturnT on_activate(const rclcpp_lifecycle::State & state);
+   CallbackReturnT on_deactivate(const rclcpp_lifecycle::State & state);
+@@ -80,7 +84,9 @@ public:
+   void initParameters();
+ 
+ private:
+-  std::shared_ptr<rclcpp::TimerBase> timer_;
++  std::thread receive_thread_;
++  std::atomic<bool> running_{false};
++  void stop_receive_thread();
+ 
+   void process_packet(CRTPacket * const);
+ 
+diff --git a/qualisys_driver/src/qualisys_driver.cpp b/qualisys_driver/src/qualisys_driver.cpp
+index f4776c6..cb7be2a 100644
+--- a/qualisys_driver/src/qualisys_driver.cpp
++++ b/qualisys_driver/src/qualisys_driver.cpp
+@@ -79,10 +79,18 @@ void QualisysDriver::set_settings_qualisys()
+ 
+ void QualisysDriver::loop()
+ {
++  // Receive streamed frames from QTM at the full system rate
+   CRTPacket * prt_packet = port_protocol_.GetRTPacket();
+   CRTPacket::EPacketType e_type;
+-  port_protocol_.GetCurrentFrame(CRTProtocol::cComponent3d + CRTProtocol::cComponent6d);
+-  if (port_protocol_.ReceiveRTPacket(e_type, true)) {
++  while (running_ && rclcpp::ok()) {
++    auto response = port_protocol_.Receive(e_type, true, 100000);  // timeout 100 ms
++    if (response == CNetwork::ResponseType::timeout) {
++      continue;
++    }
++    if (response != CNetwork::ResponseType::success) {
++      RCLCPP_ERROR(get_logger(), "Connection to Qualisys lost");
++      break;
++    }
+     switch (e_type) {
+       case CRTPacket::PacketError:
+         {
+@@ -98,11 +106,19 @@ void QualisysDriver::loop()
+         process_packet(prt_packet);
+         break;
+       default:
+-        RCLCPP_ERROR(get_logger(), "Unknown CRTPacket");
++        break;
+     }
+   }
+ }
+ 
++void QualisysDriver::stop_receive_thread()
++{
++  running_ = false;
++  if (receive_thread_.joinable()) {
++    receive_thread_.join();
++  }
++}
++
+ void QualisysDriver::process_packet(CRTPacket * const packet)
+ {
+   unsigned int marker_count = packet->Get3DMarkerCount();
+@@ -223,6 +239,11 @@ QualisysDriver::QualisysDriver(const rclcpp::NodeOptions node_options)
+   initParameters();
+ }
+ 
++QualisysDriver::~QualisysDriver()
++{
++  stop_receive_thread();
++}
++
+ using CallbackReturnT =
+   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+ 
+@@ -295,7 +316,15 @@ CallbackReturnT QualisysDriver::on_activate(const rclcpp_lifecycle::State &)
+     
+     
+ 
+-    timer_ = this->create_wall_timer(100ms, std::bind(&QualisysDriver::loop, this));
++    if (!port_protocol_.StreamFrames(
++        CRTProtocol::RateAllFrames, 0, 0, nullptr,
++        CRTProtocol::cComponent3d | CRTProtocol::cComponent6d))
++    {
++      RCLCPP_FATAL(get_logger(), "Unable to start streaming: %s", port_protocol_.GetErrorString());
++      return CallbackReturnT::FAILURE;
++    }
++    running_ = true;
++    receive_thread_ = std::thread(&QualisysDriver::loop, this);
+ 
+     RCLCPP_INFO(get_logger(), "Activated!\n");
+ 
+@@ -311,7 +340,7 @@ CallbackReturnT QualisysDriver::on_deactivate(const rclcpp_lifecycle::State &)
+ {
+   RCLCPP_INFO(get_logger(), "State id [%d]", get_current_state().id());
+   RCLCPP_INFO(get_logger(), "State label [%s]", get_current_state().label().c_str());
+-  timer_->reset();
++  stop_receive_thread();
+   update_pub_->on_deactivate();
+   mocap_markers_pub_->on_deactivate();
+   mocap_rigid_bodies_pub_->on_deactivate();
+@@ -328,7 +357,6 @@ CallbackReturnT QualisysDriver::on_cleanup(const rclcpp_lifecycle::State &)
+   update_pub_.reset();
+   mocap_markers_pub_.reset();
+   mocap_rigid_bodies_pub_.reset();
+-  timer_->reset();
+   RCLCPP_INFO(get_logger(), "Cleaned up!\n");
+ 
+   return CallbackReturnT::SUCCESS;

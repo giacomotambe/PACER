@@ -1,3 +1,45 @@
+# mocap4ros2_qualisys (vendored in PACER)
+
+**Version (2026-11-24): aligned with [qualisys_docker](https://github.com/giacomotambe/qualisys_docker) `4c2e2f1`.**
+
+What is in this folder:
+- **Driver and SDK:** `qualisys_driver` and `qualisys_cpp_sdk` from
+  [CentroEPiaggio/mocap4ros2_qualisys](https://github.com/CentroEPiaggio/mocap4ros2_qualisys)
+  `05dcf0b`, with the streaming patch `patches/qualisys_driver_streaming.patch`
+  already applied. The driver now receives every frame QTM streams, instead of
+  polling every 100 ms, so `/rigid_bodies` and `/markers` come out at the QTM
+  capture rate (e.g. 200 Hz) instead of 10 Hz.
+- **`qualisys_driver/config/qualisys_driver_params.yaml`:**
+  - QTM IP and port, plus QoS settings.
+  - The port key is now `port`, the name the driver actually reads. The old
+    `host_port` was silently ignored.
+- **`scripts/`:**
+  - `record_mocap.sh <experiment> [rigid_body ...]` records the pose of one
+    or more rigid bodies into a bag in `/home/ros/bags` (`./bags` of the repo).
+  - `rigid_body_filter.py` republishes `/rigid_bodies` as `/<name>/pose`.
+- **`mocap_msgs`:** stays at the vendored Humble version, which the driver
+  needs. On the `rolling` branch the package has been renamed
+  `mocap4r2_interfaces` and is not compatible.
+
+The PACER Docker setup is unchanged.
+- **Same image and same volumes:** this folder is bind-mounted at
+  `/home/ros/src/mocap4ros2_qualisys`, and `docker/entrypoint.sh` rebuilds the
+  workspace at every start. A `docker compose up` (or a restart of the
+  container) is enough to build the patched driver.
+- **No new container:** the driver and the scripts run inside `pacer_tupac`.
+
+```bash
+docker compose up -d && docker compose exec pacer bash
+ros2 launch qualisys_driver qualisys.launch.py                                  # driver
+/home/ros/src/mocap4ros2_qualisys/scripts/record_mocap.sh test1 traquad omnicar # recording (second shell)
+```
+
+The parameters are read from the install folder (`--symlink-install`), so
+edits to the YAML only need a driver restart. Network setup, QTM settings and
+clock synchronisation are described in the qualisys_docker README.
+
+---
+
 # mocap4ros_qualisys
 
 [![GitHub Action Status](https://github.com/MOCAP4ROS2-Project/mocap4ros2_qualisys/actions/workflows/main.yaml/badge.svg)](https://github.com/MOCAP4ROS2-Project/qualisys_driver)
