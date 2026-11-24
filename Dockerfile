@@ -1,16 +1,15 @@
 # syntax=docker/dockerfile:1
 #
-# ROS2 Humble + Nav2 + Gazebo (gz-sim Harmonic) + CUDA dev image for
-# pacer-tupac-code-ros. Built on an NVIDIA CUDA base so pacer_core's torch
-# dependency (Social-STGCNN predictor) can use the GPU, and so gz-sim's
-# rendering can use the GPU too; requires the NVIDIA Container Toolkit on the
-# host (see docker-compose.yml). Ubuntu 22.04 (jammy) base, not 24.04: Humble
-# only ships binary packages for jammy — mocap4ros2_qualisys requires Humble.
+# ROS2 Humble + Nav2 image for pacer-tupac-code-ros, for the real robot
+# (no simulation: the Gazebo/pacer_sim part was removed on 2026-11-24).
+# Ubuntu 22.04 (jammy) base, not 24.04: Humble only ships binary packages for
+# jammy — mocap4ros2_qualisys requires Humble.
 #
-# NUC / any PC without an NVIDIA GPU (rev. 2026-11-24): build with
+# Default: NVIDIA CUDA base + CUDA torch (docker-compose.yml, workstation).
+# NUC / any PC without an NVIDIA GPU: build with
 #   BASE_IMAGE=ubuntu:22.04  TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-# (docker-compose.nuc.yml does this). The PACER nodes never use the GPU (models are
-# loaded with map_location="cpu"); only gz-sim rendering benefits from it.
+# (docker-compose.nuc.yml does this). The PACER nodes never need the GPU
+# (models are loaded with map_location="cpu").
 ARG BASE_IMAGE=nvidia/cuda:12.6.3-runtime-ubuntu22.04
 FROM ${BASE_IMAGE}
 
@@ -41,7 +40,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-ros-base \
         ros-${ROS_DISTRO}-navigation2 \
         ros-${ROS_DISTRO}-nav2-bringup \
-        ros-${ROS_DISTRO}-ros-gz \
         python3-colcon-common-extensions \
         python3-rosdep \
         python3-pip \
@@ -62,8 +60,6 @@ RUN pip3 install --no-cache-dir \
 WORKDIR /home/${USERNAME}
 COPY pacer ./src/pacer
 COPY mocap4ros2_qualisys ./src/mocap4ros2_qualisys
-COPY jo_description ./src/jo_description
-COPY jo_navigation ./src/jo_navigation
 
 # mocap_msgs/qualisys_driver come from the vendored src/mocap4ros2_qualisys
 # (mocap4ros2/qualisys_ros2 ecosystem, not in the default ROS2 apt repos).
@@ -72,11 +68,6 @@ COPY jo_navigation ./src/jo_navigation
 # python3-torch is skipped because it's installed above with a pinned CUDA
 # build. rqt_mocap_control (Qt GUI, unused by this project) is excluded from
 # the build entirely via COLCON_IGNORE.
-# jo_description/jo_navigation (github.com/mlisi1) are vendored the same
-# way, so pacer/pacer_sim can `$(find jo_description)` in its xacro and
-# include jo_navigation's Nav2 launch files from the SAME colcon workspace
-# — they live in a separate repo/container (jo-zotac) otherwise, which
-# ros2 launch/xacro can't reach across.
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
     && apt-get update \
     && rosdep update \

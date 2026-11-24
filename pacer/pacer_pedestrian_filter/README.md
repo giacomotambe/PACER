@@ -28,9 +28,7 @@ Il nodo `pedestrian_filter_node`:
 
 1. Si iscrive alla point cloud grezza del lidar (`input_topic`) e a
    `pacer_msgs/PedestrianTrackArray` (`tracks_topic`) — lo stesso
-   messaggio/topic sia per `pacer_qualisys_bridge` (hardware reale) sia
-   per `sim_pedestrian_publisher` (Gazebo): il nodo non distingue le due
-   sorgenti.
+   messaggio/topic pubblicato da `pacer_qualisys_bridge`.
 2. Ad ogni point cloud in ingresso, trasforma via `tf2` l'ultima posizione
    nota di ciascun pedone nel frame della nuvola.
 3. Rimuove (numpy vettorizzato) i punti entro `exclusion_radius` da
@@ -52,13 +50,11 @@ piuttosto che bloccare/scartare dati del lidar.
 | `tf_timeout_s` | `0.1` | Timeout lookup tf pedone→frame nuvola |
 
 Valori di progetto in `pacer_bringup/config/pacer_params.yaml` (sezione
-`pacer_pedestrian_filter`, usata sia da `pacer_bringup.launch.py` che da
-`pacer_sim`'s `pacer_gazebo_bringup.launch.py`).
+`pacer_pedestrian_filter`, usata da `pacer_bringup.launch.py`).
 
 ## Integrazione con Nav2
 
-`local_costmap`/`global_costmap` (in `pacer_sim/config/nav2_pacer_sim.yaml`
-per la simulazione, o nel `nav2_params.yaml` del progetto per hardware
-reale — vedi nota in `pacer_bringup/config/nav2_params_snippet.yaml`)
+`local_costmap`/`global_costmap` (nel `nav2_params.yaml` del robot — vedi
+nota in `pacer_bringup/config/nav2_params_snippet.yaml`)
 devono puntare `observation_sources.scan.topic` su `output_topic` di
 questo nodo, **non** sul topic grezzo del lidar.

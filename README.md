@@ -97,7 +97,7 @@ source install/setup.bash
 `docker-compose.yml` needs an NVIDIA GPU and the NVIDIA Container Toolkit.
 On a NUC, use `docker-compose.nuc.yml` instead.
 - **What is the same:** container name (`pacer_tupac`), bind mounts (`./pacer`,
-  `./mocap4ros2_qualisys`, `./jo_*`, `./bags`) and the `pacer_models` volume.
+  `./mocap4ros2_qualisys`, `./bags`) and the `pacer_models` volume.
 - **What changes:**
   - the image is CPU-only (`ubuntu:22.04` base, CPU torch wheels, tag
     `pacer-tupac-code-ros:nuc`);
@@ -116,8 +116,10 @@ budget:
 - if needed, set `v2_jit: true` and adjust `v2_t_budget` / `v2_deadline` in
   `pacer_params.yaml`.
 
-Gazebo simulation (`pacer_sim`) runs on Mesa (Intel iGPU, `/dev/dri`), but is
-meant for the workstation.
+The repo is meant for the real robot only. The Gazebo simulation
+(`pacer_sim`, with the vendored `jo_description` / `jo_navigation`) was
+removed on 2026-11-24 and is still in the git history (commit `98631b9`)
+if it is ever needed again.
 
 ### Qualisys driver
 

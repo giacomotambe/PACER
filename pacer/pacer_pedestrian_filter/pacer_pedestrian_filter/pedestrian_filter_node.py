@@ -18,8 +18,8 @@ simulati (sim_pedestrian_publisher): entrambi pubblicano lo stesso
 pacer_msgs/PedestrianTrackArray sullo stesso topic — questo nodo non sa
 (ne' deve sapere) da dove arrivano i pedoni.
 
-I pedoni sono tracciati in world_frame (es. "map" su hardware reale,
-"odom" in pacer_sim — vedi PedestrianTrackArray.header.frame_id), la
+I pedoni sono tracciati in world_frame (es. "map" — vedi
+PedestrianTrackArray.header.frame_id), la
 point cloud e' nel frame del sensore (es. "velodyne") — le posizioni dei
 pedoni vengono trasformate nel frame della nuvola via tf2 ad ogni
 messaggio."""

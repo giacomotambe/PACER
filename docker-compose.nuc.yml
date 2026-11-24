@@ -24,14 +24,12 @@ services:
     volumes:
       - ./pacer:/home/ros/src/pacer
       - ./mocap4ros2_qualisys:/home/ros/src/mocap4ros2_qualisys
-      - ./jo_description:/home/ros/src/jo_description
-      - ./jo_navigation:/home/ros/src/jo_navigation
       # X11 for rviz2 (only if a monitor/X session is available; harmless otherwise)
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ~/.Xauthority:/tmp/.Xauthority:ro
       - ./bags:/home/ros/bags
       - pacer_models:/models
-    # Intel iGPU render node (rviz2/gz-sim with Mesa). Comment out if /dev/dri does not exist.
+    # Intel iGPU render node (rviz2 with Mesa). Comment out if /dev/dri does not exist.
     devices:
       - /dev/dri:/dev/dri
     stdin_open: true

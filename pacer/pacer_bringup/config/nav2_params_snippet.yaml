@@ -16,7 +16,7 @@ controller_server:
     # dell'azione FollowPath cablato a "FollowPath" — un controller
     # registrato sotto un altro nome non viene mai trovato (errore runtime
     # "FollowPath called with controller name FollowPath, which does not
-    # exist", trovato testando in simulazione, pacer_sim). Il nome del
+    # exist", trovato in un test di integrazione con Nav2). Il nome del
     # plugin C++ resta pacer_nav2_controller::PacerController, cambia solo
     # la chiave/ID con cui lo si registra qui.
     controller_plugins: ["FollowPath"]

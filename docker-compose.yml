@@ -12,14 +12,8 @@ services:
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - NVIDIA_VISIBLE_DEVICES=all
-      # "all" alone left gz-sim's ogre2 render engine falling back to Mesa's
-      # "iris" (Intel) driver instead of NVIDIA's — explicit graphics/display
-      # capabilities fixes that. __GLX_VENDOR_LIBRARY_NAME/__NV_PRIME_RENDER_
-      # OFFLOAD forced to "nvidia"/"1" caused an NV-GLX BadValue crash on
-      # this hybrid Intel+NVIDIA (PRIME) machine — left empty instead,
-      # exactly like jo-zotac's compose (the known-working config on the
-      # same hardware), which resets any inherited value and lets GLX
-      # vendor selection happen per-request instead of being hard-forced.
+      # The two PRIME variables below are empty on purpose: forcing them on a
+      # hybrid Intel+NVIDIA machine crashed GLX (rviz2).
       - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,video,utility,compute
       - __NV_PRIME_RENDER_OFFLOAD=
       - __GLX_VENDOR_LIBRARY_NAME=
@@ -34,13 +28,10 @@ services:
               capabilities: [gpu]
     volumes:
       # Live-edit sources from the host without rebuilding the image
-      # (one bind mount per top-level source folder, as in jo-zotac).
+      # (one bind mount per top-level source folder).
       - ./pacer:/home/ros/src/pacer
       - ./mocap4ros2_qualisys:/home/ros/src/mocap4ros2_qualisys
-      - ./jo_description:/home/ros/src/jo_description
-      - ./jo_navigation:/home/ros/src/jo_navigation
-      # X11 + DRI render nodes, for rviz2/plotjuggler and gz-sim's ogre2
-      # rendering (the sensors system needs GPU rendering even headless).
+      # X11 + DRI render nodes, for rviz2/plotjuggler.
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ~/.Xauthority:/tmp/.Xauthority:ro
       - /dev/dri:/dev/dri
