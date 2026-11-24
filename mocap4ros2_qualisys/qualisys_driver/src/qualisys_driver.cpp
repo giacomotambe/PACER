@@ -316,8 +316,11 @@ CallbackReturnT QualisysDriver::on_activate(const rclcpp_lifecycle::State &)
     
     
 
+    // stream_frequency = 0: every frame (wired LAN); > 0: QTM downsamples to this rate, which keeps
+    // the TCP stream from backing up on a WiFi link (PACER samples the poses at 2.5 Hz).
+    const auto rate = stream_frequency_ > 0 ? CRTProtocol::RateFrequency : CRTProtocol::RateAllFrames;
     if (!port_protocol_.StreamFrames(
-        CRTProtocol::RateAllFrames, 0, 0, nullptr,
+        rate, static_cast<unsigned int>(stream_frequency_ > 0 ? stream_frequency_ : 0), 0, nullptr,
         CRTProtocol::cComponent3d | CRTProtocol::cComponent6d))
     {
       RCLCPP_FATAL(get_logger(), "Unable to start streaming: %s", port_protocol_.GetErrorString());
@@ -412,6 +415,7 @@ void QualisysDriver::initParameters()
   declare_parameter<int>("qos_depth", 10);
   declare_parameter<bool>("use_markers_with_id", true);
   declare_parameter<bool>("publish_tf", false);
+  declare_parameter<int>("stream_frequency", 0);
 
   get_parameter<std::string>("host_name", host_name_);
   get_parameter<int>("port", port_);
@@ -423,6 +427,7 @@ void QualisysDriver::initParameters()
   get_parameter<int>("qos_depth", qos_depth_);
   get_parameter<bool>("use_markers_with_id", use_markers_with_id_);
   get_parameter<bool>("publish_tf", publish_tf_);
+  get_parameter<int>("stream_frequency", stream_frequency_);
 
   RCLCPP_INFO(
     get_logger(),
@@ -430,6 +435,9 @@ void QualisysDriver::initParameters()
   RCLCPP_INFO(
     get_logger(),
     "Param port: %d", port_);
+  RCLCPP_INFO(
+    get_logger(),
+    "Param stream_frequency: %d (0 = every frame)", stream_frequency_);
   RCLCPP_INFO(
     get_logger(),
     "Param last_frame_number: %d", last_frame_number_);

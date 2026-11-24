@@ -89,8 +89,10 @@ Everything below runs inside the container. The defaults are ready to use:
 the predictor and a simulated D_cal ship in `models/`, the `standard` calibrator
 is selected, and the safety filter has `away_only: true`.
 
-1. **Once:** clone the repo, put the NUC on the Qualisys LAN
-   (see `mocap4ros2_qualisys/README.md`) and build the image:
+1. **Once:** clone the repo and connect the NUC to the WiFi where the QTM PC
+   is. Set `host_name` (QTM PC's IP) in
+   `mocap4ros2_qualisys/qualisys_driver/config/qualisys_driver_params.yaml`;
+   see `mocap4ros2_qualisys/README.md`. Then build the image:
 
        docker compose -f docker-compose.nuc.yml build
        docker compose -f docker-compose.nuc.yml up -d
@@ -110,7 +112,10 @@ is selected, and the safety filter has `away_only: true`.
        ros2 launch pacer_bringup pacer_bringup.launch.py robot_body:=omnicar run_name:=auto
 
    Then start Nav2 for the car, with the snippet in
-   `pacer_bringup/config/nav2_params_snippet.yaml`. The controller output goes
+   `pacer_bringup/config/nav2_params_snippet.yaml`. The 2D lidar on `/scan`
+   is filtered by `pacer_pedestrian_filter`: the costmaps read
+   `/scan/pedestrian_filtered` (`LaserScan`, `inf_is_valid: true`; full
+   example in the snippet). The controller output goes
    to `/cmd_vel_nav`; the safety filter publishes `/cmd_vel`.
 5. **Real D_cal:**
    - Record a run with the car moving among people (teleoperated or on a

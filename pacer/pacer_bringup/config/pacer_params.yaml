@@ -124,8 +124,12 @@ pacer_safety_filter:
 
 pacer_pedestrian_filter:
   ros__parameters:
-    input_topic: "/velodyne_points"
-    output_topic: "/velodyne_points/pedestrian_filtered"
+    # rev. 2026-11-24: lidar 2D (LaserScan) della macchinina. Per un lidar 3D: input_type "cloud",
+    # input_topic "/velodyne_points", output_topic "/velodyne_points/pedestrian_filtered".
+    input_type: "scan"                         # scan (2D, LaserScan) | cloud (3D, PointCloud2)
+    input_topic: "/scan"                       # topic del driver del lidar
+    output_topic: "/scan/pedestrian_filtered"  # da usare nell'obstacle_layer delle costmap di Nav2
+    filtered_value: "inf"                      # raggi sui pedoni -> +inf (con inf_is_valid: true la costmap ripulisce la scia)
     tracks_topic: "/pacer/pedestrian_tracks"
     exclusion_radius: 0.6
     tf_timeout_s: 0.1

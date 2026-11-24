@@ -1,7 +1,8 @@
 qualisys_driver_node:
   ros__parameters:
-    host_name: "192.168.254.1"
+    host_name: "192.168.254.1"             # IP del PC con QTM sulla rete (WiFi) raggiungibile dal NUC
     port: 22222
+    stream_frequency: 50                   # [Hz] WiFi: 20-50 basta (PACER campiona a 2.5 Hz); 0 = ogni frame (solo via cavo)
     frame_count: 0
     last_frame_number: 0
     dropped_frame_count: 0

@@ -110,6 +110,7 @@ private:
     mocap_rigid_bodies_pub_;
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Empty>::SharedPtr update_pub_;
   bool publish_tf_;
+  int stream_frequency_{0};  // [Hz] 0 = every frame; > 0 = QTM streams at this rate (WiFi)
 };
 
 static
