@@ -9,6 +9,12 @@ Fail-safe: senza posa del robot (TF) o con tracce delle persone piu' vecchie di
 tracks_timeout_s, frena. Le velocita' delle persone sono stimate dagli ultimi due punti dello
 storico (cadenza dt_out del bridge).
 
+Allineamento temporale (rev. 2026-11-25): le posizioni delle tracce sono quelle del tick del
+bridge, il comando arriva dopo predittore + MPC (0.1-0.4 s). Con extrapolate_tracks la posizione
+di ogni persona viene portata all'istante del controllo (p + v * eta' del campione), come nel
+benchmark; senza, una persona che viene incontro a 1.3 m/s e' fino a ~0.5 m piu' vicina di quanto
+il filtro crede (contatti in moto nel 18-31% degli incontri frontali, results/demo/ros_timing_check.py).
+
 Nav2: rimappare l'uscita del controller_server su cmd_in_topic (es. /cmd_vel_nav), e far
 leggere alla base cmd_out_topic. Con il velocity_smoother di Nav2, questo nodo va DOPO lo
 smoother (ultimo anello prima della base).
@@ -44,10 +50,13 @@ class SafetyFilterNode(Node):
         dp("tracks_timeout_s", 0.6)
         dp("enabled", True)
         dp("away_only", False)        # rev. 2026-11-22: stop solo se il moto avvicina la persona; rotazione a robot fermo
+        dp("extrapolate_tracks", True)  # rev. 2026-11-25: posizioni portate all'istante del controllo
+        dp("max_track_age_s", 1.0)      # eta' massima usata nell'estrapolazione [s]
         dp("log_csv", "")             # un record per comando (anche quelli lasciati passare)
         g = lambda n: self.get_parameter(n).value
         self.p = {n: g(n) for n in ("dt_tracks", "t_cmd", "a_dec", "a_ped", "clearance_l", "margin",
-                                    "tracks_timeout_s", "global_frame", "base_frame", "enabled", "away_only")}
+                                    "tracks_timeout_s", "global_frame", "base_frame", "enabled", "away_only",
+                                    "extrapolate_tracks", "max_track_age_s")}
 
         from tf2_ros import Buffer, TransformListener
         self.tf_buffer = Buffer()
@@ -60,6 +69,7 @@ class SafetyFilterNode(Node):
         self.ped_vel = np.zeros((0, 2))
         self.ped_ids = []
         self.t_tracks = None
+        self.stamp_tracks = None      # istante del campione (header del bridge), tempo ROS [s]
         self.v_last, self.t_last = 0.0, None
         self.braking = False
         self.n_events = 0
@@ -69,7 +79,7 @@ class SafetyFilterNode(Node):
             self._log = csv.writer(self._log_f)
             if self._log_f.tell() == 0:
                 self._log.writerow(["stamp", "v_in", "w_in", "v_out", "w_out", "action", "reason",
-                                    "robot_x", "robot_y", "robot_th", "n_peds", "ids"])
+                                    "robot_x", "robot_y", "robot_th", "n_peds", "ids", "track_age"])
         self.get_logger().info(
             f"pacer_safety_filter: {g('cmd_in_topic')} -> {g('cmd_out_topic')}, a_dec={self.p['a_dec']}, "
             f"a_ped={self.p['a_ped']}, enabled={self.p['enabled']}")
@@ -91,6 +101,8 @@ class SafetyFilterNode(Node):
         self.ped_vel = np.array(vel).reshape(-1, 2)
         self.ped_ids = ids
         self.t_tracks = time.monotonic()
+        st = msg.header.stamp
+        self.stamp_tracks = st.sec + st.nanosec * 1e-9 if (st.sec or st.nanosec) else None
 
     def _robot_pose(self):
         try:
@@ -108,6 +120,10 @@ class SafetyFilterNode(Node):
         v_in, w_in = float(cmd.linear.x), float(cmd.angular.z)
         x = self._robot_pose()
         action, reason, ids = "pass", "", []
+        age = 0.0
+        if self.stamp_tracks is not None:
+            age = self.get_clock().now().nanoseconds * 1e-9 - self.stamp_tracks
+            age = min(max(age, 0.0), float(self.p["max_track_age_s"]))
         v_out, w_out = v_in, w_in
         if not self.p["enabled"]:
             reason = "disabled"
@@ -116,7 +132,8 @@ class SafetyFilterNode(Node):
         elif self.t_tracks is None or now - self.t_tracks > float(self.p["tracks_timeout_s"]):
             action, reason = "brake", "stale_tracks"
         else:
-            idx = unsafe_people(x, max(v_in, 0.0), w_in, self.ped_pos, self.ped_vel,
+            ped_pos = self.ped_pos + self.ped_vel * age if self.p["extrapolate_tracks"] else self.ped_pos
+            idx = unsafe_people(x, max(v_in, 0.0), w_in, ped_pos, self.ped_vel,
                                 t_cmd=float(self.p["t_cmd"]), a_dec=float(self.p["a_dec"]),
                                 a_ped=float(self.p["a_ped"]), clearance_l=float(self.p["clearance_l"]),
                                 margin=float(self.p["margin"]), away_only=bool(self.p["away_only"]))
@@ -140,7 +157,7 @@ class SafetyFilterNode(Node):
             self._log.writerow([f"{self.get_clock().now().nanoseconds * 1e-9:.3f}", f"{v_in:.4f}",
                                 f"{w_in:.4f}", f"{v_out:.4f}", f"{w_out:.4f}", action, reason,
                                 f"{xs[0]:.4f}", f"{xs[1]:.4f}", f"{xs[2]:.4f}", len(self.ped_ids),
-                                ";".join(ids)])
+                                ";".join(ids), f"{age:.3f}"])
             self._log_f.flush()
 
 
