@@ -129,7 +129,6 @@ pacer_safety_filter:
     margin: 0.1
     tracks_timeout_s: 0.6           # tracce piu' vecchie -> frenata (fail-safe)
     enabled: true
-    away_only: true                 # nuovo standard (v50): frena solo se il moto avvicina la persona; rotazione da fermo, niente escape
     away_only: true             # rev. 2026-11-22: stop solo se il moto avvicina la persona; rotazione a robot fermo
     log_csv: ""                     # di solito dal launch: run_name:=... -> .../safety.csv
 
