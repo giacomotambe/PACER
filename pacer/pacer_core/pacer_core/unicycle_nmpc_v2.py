@@ -665,6 +665,7 @@ select_strategy.last = None
 # 4. passo di simulazione STRATF_DT = 0.4 s con il controllo di distanza anche a meta' passo
 #    (stessa risoluzione spaziale del passo 0.2 s per il contatto).
 STRAT_FAST = os.environ.get("PACER_STRAT_FAST", "0") == "1"
+STRAT_STATIC_PAD = float(os.environ.get("PACER_STRAT_STATIC_PAD", "0.3"))   # [m] margine attorno agli statici
 STRATF_DT = 0.4
 STRATF_HOLD = ((0.0, 1.0), (1.2, 0.4), (1.2, 0.0), (2.4, 0.0))
 STRATF_MARGIN = 0.5
@@ -812,7 +813,7 @@ _VPROF = {}   # selettore veloce: simulazione senza ciclo
 
 
 def select_strategy_fast(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max, halfplanes=(),
-                         path_dir=None, path_org=None):
+                         path_dir=None, path_org=None, statics=()):
     """Come select_strategy (stessa interfaccia), piu' veloce: vedi il commento sopra."""
     x0 = np.asarray(x0, float); goal = np.asarray(goal, float)
     dt = STRATF_DT; M = int(round(STRAT_T / dt))
@@ -828,6 +829,16 @@ def select_strategy_fast(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max,
         obstacles = keep_o
     PP, RR = _ped_futures(obstacles, N, STRAT_T, dt / 2)           # (J, 2M, ...)
     tsh = 0.5 * dt * np.arange(1, 2 * M + 1)
+    if statics:
+        # ostacoli statici (costmap) come persone ferme di raggio d_safe + STRAT_STATIC_PAD (rev. 2026-11-26,
+        # riproduzione NUC: senza, il selettore mandava il robot a incastrarsi dietro un pilastro)
+        x0a = np.asarray(x0[:2], float)
+        st = np.array([(sx, sy, ds) for sx, sy, ds in statics if ds > 0 and np.hypot(sx - x0a[0], sy - x0a[1]) < 8.0])
+        if len(st):
+            Ps = np.repeat(st[:, None, :2], len(tsh), 1)
+            Rs = np.repeat((st[:, 2:3] + STRAT_STATIC_PAD), len(tsh), 1)
+            PP = np.concatenate([PP, Ps], 0) if len(PP) else Ps
+            RR = np.concatenate([RR, Rs], 0) if len(RR) else Rs
     far = tsh > N * DT
     if len(RR) and STRAT_R_FAR < 1e8:
         RR = np.where(far[None], np.minimum(RR, STRAT_R_FAR), RR)
@@ -914,7 +925,8 @@ def _lane_anchor(x0, goal):
     a = _LANE_ANCHOR
     if a:
         cosang = float(d @ a["dir"])
-        lat = float(abs(np.cross(a["dir"], g - a["org"])))
+        rg = g - a["org"]
+        lat = abs(float(a["dir"][0] * rg[1] - a["dir"][1] * rg[0]))     # prodotto vettoriale 2D
         if cosang > np.cos(np.radians(LANE_REANCHOR_DEG)) and lat < LANE_REANCHOR_LAT:
             return a["dir"], a["org"]
     a["dir"], a["org"] = d, p
@@ -946,7 +958,7 @@ def solve_step(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max, u_warm=No
         prev_c = _STRAT_PREV["c"]
         if STRAT_FAST:
             goal, choice, _, u_strat = select_strategy_fast(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max,
-                                                            list(halfplanes)[:H_MAX], path_dir, path_org)
+                                                            list(halfplanes)[:H_MAX], path_dir, path_org, list(statics))
         else:
             goal, choice, _, u_strat = select_strategy(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max,
                                                        list(halfplanes)[:H_MAX])
