@@ -71,6 +71,15 @@ class MpcSolverNode(Node):
         self.declare_parameter("v2_w_side", 0.5)
         self.declare_parameter("v2_w_front", 1.0)
         self.declare_parameter("v2_w_path", 0.5)
+        # rev. 2026-11-26 (benchmark v53-v60, prova NUC): costo di occupazione. Penalizza lo stare nella
+        # regione predetta di una persona anche da fermo (il vincolo e' rilasciato a robot fermo): il
+        # robot si scansa invece di fermarsi sulla linea di chi gli viene incontro. 0 = spento.
+        self.declare_parameter("v2_w_occ", 0.0)
+        self.declare_parameter("v2_occ_infl", 1.3)        # fattore sul raggio della regione
+        self.declare_parameter("v2_occ_approach", True)   # conta solo chi si avvicina o e' fermo
+        self.declare_parameter("v2_occ_goal_r", 0.0)      # [m] sfuma vicino al goal; 0 in ROS (goal = lookahead)
+        # selettore aspettare/aggirare (sperimentale: sul NUC non migliora rispetto alla sola occupazione)
+        self.declare_parameter("v2_strategy", False)
 
         dt = float(self.get_parameter("dt").value)
         hard_nmpc.set_dt(dt)
@@ -88,7 +97,13 @@ class MpcSolverNode(Node):
                 MAX_ITER=int(gp("v2_max_iter")), T_BUDGET=float(gp("v2_t_budget")),
                 SOFT=bool(gp("v2_soft")), W_SLACK=float(gp("v2_w_slack")),
                 PREV_FALLBACK=bool(gp("v2_prev_fallback")),
-                WEIGHTS=tuple(float(w) for w in gp("weights")))
+                WEIGHTS=tuple(float(w) for w in gp("weights")),
+                W_OCC=float(gp("v2_w_occ")), OCC_INFL=float(gp("v2_occ_infl")),
+                OCC_APPROACH=bool(gp("v2_occ_approach")), OCC_GOAL_R=float(gp("v2_occ_goal_r")),
+                STRATEGY=bool(gp("v2_strategy")), STRAT_FAST=True, STRAT_LANES=True, STRAT_TAU=2.5,
+                STRAT_R_FAR=1.2, STRAT_ACT=0.3, STRAT_TSUB=7.2)
+            self.get_logger().info(f"MPC v2: costo di occupazione w_occ={float(gp('v2_w_occ'))}, "
+                                   f"selettore={'on' if bool(gp('v2_strategy')) else 'off'}")
             if bool(gp("v2_jit")):
                 jkw = {"JIT": True, "JIT_FLAGS": str(gp("v2_jit_flags"))}
                 if str(gp("v2_jit_dir")):

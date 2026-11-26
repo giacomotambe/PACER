@@ -112,6 +112,13 @@ pacer_mpc_solver:
     v2_w_side: 0.5
     v2_w_front: 1.0
     v2_w_path: 0.5
+    # rev. 2026-11-26: costo di occupazione (candidato dopo benchmark v60 e prova NUC): il robot si
+    # scansa invece di fermarsi sulla linea di un pedone che gli viene incontro. 0.0 = standard
+    v2_w_occ: 60.0
+    v2_occ_infl: 1.3            # raggio della regione predetta x 1.3
+    v2_occ_approach: true       # conta solo chi si avvicina al robot o e' fermo
+    v2_occ_goal_r: 0.0          # 0 in ROS: il goal dell'MPC e' il punto di lookahead
+    v2_strategy: false          # selettore aspettare/aggirare: sperimentale, spento
     status_log_csv: ""          # di solito dal launch: run_name:=... -> .../mpc_status.csv
 
 pacer_safety_filter:

@@ -44,7 +44,7 @@ controller_server:
       xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.25
       k_align: 2.0
-      k_heading_bias: 1.0
+      k_heading_bias: 0.0      # rev. 2026-11-26: 1.0 si somma all'omega dell'MPC (che non lo conosce) e lo blocca vicino agli ostacoli; 0 con hard_v2
       mpc_service_name: "/pacer/compute_mpc_command"
       pedestrian_predictions_topic: "/pacer/pedestrian_predictions"
       q_tupac_topic: "/pacer/q_tupac"
