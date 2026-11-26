@@ -95,6 +95,40 @@ SOFT_INFEAS = 1e-2                   # scarto oltre il quale il problema e' dich
 SQP_MAX_ITER = 50
 _SQP = {}
 W_STATIC = float(os.environ.get("PACER_W_STATIC", "4000.0"))
+# Liberare la strada (rev. 2026-11-25): costo soft sull'occupazione delle regioni predette delle
+# persone, valido ANCHE da fermo (il vincolo rigido e' rilasciato a robot fermo, passive safety).
+# Senza questo termine, davanti a un pedone che non devia, fermarsi sulla sua traiettoria e'
+# l'ottimo (nessun vincolo violato). Con W_OCC > 0 il robot e' spinto a stare dove la persona non
+# sara': fuori dalla regione allargata di OCC_INFL. 0 = spento (standard fino a v52).
+W_OCC = float(os.environ.get("PACER_W_OCC", "0.0"))
+OCC_INFL = float(os.environ.get("PACER_OCC_INFL", "1.3"))   # fattore sul raggio della regione
+# Solo da fermo/lento (rev. 2026-11-25 notte, diagnosi v56): nella folla il costo di occupazione
+# applicato anche in moto fa schivare tutti lateralmente (marciapiede: percorso 66 -> 88-93 m). Con
+# OCC_V > 0 il termine e' pesato per max(0, 1 - v_k / OCC_V): penalizza il fermarsi (o quasi) nella
+# regione predetta, non il passarle accanto in moto (gia' coperto dal vincolo). 0 = sempre (v53).
+OCC_V = float(os.environ.get("PACER_OCC_V", "0.0"))
+# Solo i primi OCC_KMAX passi (rev. 2026-11-25 notte): con l'arresto terminale ogni piano finisce
+# fermo, quindi gli ultimi passi sono sempre "lenti" e il costo spingerebbe il robot a cercarsi un
+# punto d'arresto fuori dalle traiettorie altrui (schivate laterali continue). 0 = tutti i passi.
+OCC_KMAX = int(os.environ.get("PACER_OCC_KMAX", "0"))
+# Solo chi viene incontro (rev. 2026-11-26): il costo di occupazione vale solo per le persone che si
+# avvicinano al robot (velocita' verso il robot > OCC_VCLOSE) o quasi ferme (|v| < OCC_VSTILL);
+# chi si allontana (stessa direzione davanti, o dall'altra parte) non conta: non verra' addosso a un
+# robot fermo, e schivarla allunga il percorso (marciapiede). Un parametro per ostacolo in fondo a P.
+OCC_APPROACH = os.environ.get("PACER_OCC_APPROACH", "0") == "1"
+OCC_VCLOSE = float(os.environ.get("PACER_OCC_VCLOSE", "0.1"))
+OCC_VSTILL = float(os.environ.get("PACER_OCC_VSTILL", "0.3"))
+# Vicino al goal (rev. 2026-11-26): il robot DEVE fermarsi sul goal; con persone attorno il costo di
+# occupazione lo spingeva via dal punto d'arresto e il robot girava in tondo (marciapiede, fine
+# giro: +20-25 m di percorso). Il costo sfuma a zero entro OCC_GOAL_R dal goal (lineare da 2x). 0 = no.
+OCC_GOAL_R = float(os.environ.get("PACER_OCC_GOAL_R", "0.0"))
+# Passare dietro (rev. 2026-11-25): penalita' per stare DAVANTI alla persona lungo la sua direzione
+# di moto predetta e dentro la sua corsia (larghezza ~ raggio della regione allargata). Se la persona
+# va in una direzione, il robot pianifica dalla parte opposta (dietro di lei) invece di correrle
+# davanti. Sfuma per persone ferme. 0 = spento.
+W_AHEAD = float(os.environ.get("PACER_W_AHEAD", "0.0"))
+AHEAD_LEN = float(os.environ.get("PACER_AHEAD_LEN", "2.5"))   # [m] quanto avanti conta la corsia
+OCC_MS = float(os.environ.get("PACER_OCC_MS", "0.5"))       # costo di occupazione oltre cui provare tutti gli avvii
 
 _CACHE = {}
 _DUMP = os.environ.get("PACER_DUMP")   # file pickle dei problemi (profilazione offline)
@@ -123,7 +157,7 @@ def _build(N, J, social, Hn=H_MAX, Sn=S_MAX):
     """Solutore IPOPT per N passi e J ostacoli (taglia fissa, slot vuoti con q2 = 0)."""
     U = ca.SX.sym("U", 2 * N)
     kidx = []                        # intervallo di ogni vincolo dopo quelli di accelerazione
-    npar = 3 + 2 + 2 + 4 + J * (2 + N * 2 + N * 4 + N) + 3 * Hn + 3 * Sn + (1 if social else 0)
+    npar = 3 + 2 + 2 + 4 + J * (2 + N * 2 + N * 4 + N) + 3 * Hn + 3 * Sn + (1 if social else 0) + J
     P = ca.SX.sym("P", npar)
     x0, um, goal = P[0:3], P[3:5], P[5:7]
     path_dir, path_org = P[7:9], P[9:11]   # retta del percorso globale (costo sociale, punto 5)
@@ -166,6 +200,8 @@ def _build(N, J, social, Hn=H_MAX, Sn=S_MAX):
     n_rate = len(g)
     # 2) vincoli sui segmenti, uno per ostacolo e intervallo
     soc_obs = []
+    occ_terms = []
+    occ_on = P[npar - J:npar] if J else None          # 1 = la persona conta per il costo di occupazione
     for j in range(J):
         mu0 = P[off:off + 2]; off += 2
         mu = ca.reshape(P[off:off + 2 * N], 2, N); off += 2 * N
@@ -182,6 +218,23 @@ def _build(N, J, social, Hn=H_MAX, Sn=S_MAX):
                 g.append(ca.mtimes([r.T, S, r]) - q2[k] * moving)
                 lbg.append(0.0); ubg.append(ca.inf); kidx.append(k)
             prev_mu = mu[:, k]
+            if W_OCC > 0 and (OCC_KMAX <= 0 or k < OCC_KMAX):
+                r_end = pos[k + 1] - mu[:, k]
+                m = ca.mtimes([r_end.T, S, r_end]) / (q2[k] * OCC_INFL ** 2 + 1e-9)
+                slow = ca.fmax(0, 1 - U[2 * k] / OCC_V) if OCC_V > 0 else 1
+                occ_terms.append(occ_on[j] * ca.if_else(q2[k] > 0, 1, 0) * slow * ca.fmax(0, 1 - m) ** 2)
+            if W_AHEAD > 0:
+                r_end = pos[k + 1] - mu[:, k]
+                vk = mu[:, k] - (mu[:, k - 1] if k > 0 else mu0)
+                s2 = ca.sumsqr(vk)
+                nd = vk / ca.sqrt(s2 + 1e-4)
+                fade = s2 / (s2 + (0.1 * DT) ** 2)                   # ~0 per persone ferme
+                R2 = q2[k] * OCC_INFL ** 2 / (0.5 * (S[0, 0] + S[1, 1]) + 1e-9)   # raggio^2 medio della regione
+                along = nd[0] * r_end[0] + nd[1] * r_end[1]          # > 0: robot davanti alla persona
+                lat = nd[0] * r_end[1] - nd[1] * r_end[0]
+                occ_terms.append((W_AHEAD / max(W_OCC, 1e-9)) * ca.if_else(q2[k] > 0, 1, 0) * fade
+                                 * ca.exp(-lat ** 2 / R2) / (1 + ca.exp(-along / 0.2))
+                                 * ca.fmax(0, 1 - along / AHEAD_LEN) ** 2)
         soc_obs.append((mu, Si, q2))
     for h in range(Hn):
         nx, ny, d = P[off], P[off + 1], P[off + 2]; off += 3
@@ -195,6 +248,8 @@ def _build(N, J, social, Hn=H_MAX, Sn=S_MAX):
         for k in range(1, N + 1):
             dd = ca.sqrt((pos[k][0] - sx) ** 2 + (pos[k][1] - sy) ** 2 + 1e-9)
             J_cost += W_STATIC * ca.fmax(0, ds - dd) ** 2
+    if occ_terms:
+        J_cost += max(W_OCC, 1e-9) * ca.sum1(ca.vertcat(*occ_terms))
     if social:
         J_cost += social_terms(pos, U, soc_obs, path_dir, path_org, P[off], N)
     if SOFT:
@@ -331,7 +386,7 @@ def _get(N, J, H=H_MAX, S=S_MAX):
     Jb, Hb, Sb = _bucket(J, BUCKETS), _bucket(min(H, H_MAX), H_BUCKETS), _bucket(min(S, S_MAX), S_BUCKETS)
     if JIT:          # meno librerie da compilare: semipiani e statici sempre alla taglia massima
         Hb, Sb = H_MAX, S_MAX
-    key = (N, Jb, Hb, Sb, SOCIAL, DT, JIT, HYBRID, SOFT, W_SLACK, W_HEAD, tuple(sorted(IPOPT_EXTRA.items())))
+    key = (N, Jb, Hb, Sb, SOCIAL, DT, JIT, HYBRID, SOFT, W_SLACK, W_HEAD, W_OCC, OCC_INFL, OCC_V, OCC_KMAX, W_AHEAD, AHEAD_LEN, tuple(sorted(IPOPT_EXTRA.items())))
     if key not in _CACHE:
         _CACHE[key] = _build(N, Jb, SOCIAL, Hb, Sb)
     return _CACHE[key], Jb, Hb, Sb
@@ -408,6 +463,7 @@ def _params(x0, um, goal, obstacles, N, Jb, path_dir, path_org, halfplanes=(), s
         parts.append(np.array([1e4, 1e4, 0.0]))       # d_safe = 0: nessun costo
     if SOCIAL:
         parts.append(np.array([1.0]))
+    parts.append(np.array([float(o.get("occ_on", 1.0)) for o in obstacles] + [0.0] * (Jb - len(obstacles))))
     return np.concatenate(parts)
 
 
@@ -449,6 +505,422 @@ def _inits(x0, um, goal, N, v_max, omega_max, u_warm):
     return cands
 
 
+def _mark_approaching(x0, obstacles):
+    """Copia degli ostacoli con occ_on = 1 per chi si avvicina al robot o e' quasi fermo, 0 altrimenti."""
+    out = []
+    p_r = np.asarray(x0[:2], float)
+    for o in obstacles:
+        p0 = np.asarray(o["mu0"], float)
+        vel = (np.asarray(o["mu"][0], float) - p0) / DT
+        d = p_r - p0
+        closing = float(vel @ d) / (float(np.linalg.norm(d)) + 1e-9)
+        on = 1.0 if (float(np.linalg.norm(vel)) < OCC_VSTILL or closing > OCC_VCLOSE) else 0.0
+        o2 = dict(o); o2["occ_on"] = on
+        out.append(o2)
+    return out
+
+
+def _occ(x0, u, obstacles, N):
+    """Occupazione del piano u (N, 2): somma di relu(1 - r'Sr / (q2 * OCC_INFL^2))^2 sugli
+    ostacoli e sugli offset, come il termine W_OCC del costo."""
+    pos = rollout(x0, u)
+    c = 0.0
+    for o in obstacles:
+        mu = np.asarray(o["mu"][:N], float); Si = np.asarray(o["Sigma_inv"][:N], float)
+        q2 = np.asarray(o["q2"][:N], float)
+        prev = np.asarray(o["mu0"], float)
+        for k in range(N):
+            if q2[k] > 0 and np.isfinite(q2[k]):
+                r = pos[k] - mu[k]
+                if W_OCC > 0 and (OCC_KMAX <= 0 or k < OCC_KMAX):
+                    slow = max(0.0, 1.0 - float(u[k, 0]) / OCC_V) if OCC_V > 0 else 1.0
+                    c += float(o.get("occ_on", 1.0)) * slow * max(0.0, 1.0 - float(r @ Si[k] @ r) / (q2[k] * OCC_INFL ** 2)) ** 2
+                if W_AHEAD > 0:
+                    vk = mu[k] - prev; s2 = float(vk @ vk)
+                    nd = vk / np.sqrt(s2 + 1e-4); fade = s2 / (s2 + (0.1 * DT) ** 2)
+                    R2 = q2[k] * OCC_INFL ** 2 / (0.5 * (Si[k][0, 0] + Si[k][1, 1]) + 1e-9)
+                    al = float(nd @ r); lat = float(nd[0] * r[1] - nd[1] * r[0])
+                    c += (W_AHEAD / max(W_OCC, 1e-9)) * fade * np.exp(-lat ** 2 / R2) / (1 + np.exp(-al / 0.2))                         * max(0.0, 1 - al / AHEAD_LEN) ** 2
+            prev = mu[k]
+    return c
+
+
+# --- scelta della strategia: aspettare o aggirare (rev. 2026-11-25) ----------------------------
+# L'orizzonte dell'MPC (N*DT = 2.4 s) e' troppo corto per capire se conviene rallentare e lasciar
+# passare una persona o aggirarla: ogni ciclo si simulano su STRAT_T secondi alcune strategie
+# semplici (via laterale a sinistra/destra di diverse ampiezze x attesa/rallentamento iniziale),
+# con le persone che proseguono la traiettoria predetta, e si sceglie quella che arriva prima
+# senza entrare nelle regioni predette (e senza fermarsi dentro). Il goal dell'MPC diventa la
+# posizione della strategia scelta dopo STRAT_TSUB secondi; vincoli e garanzie non cambiano.
+STRATEGY = os.environ.get("PACER_STRATEGY", "0") == "1"
+STRAT_T = float(os.environ.get("PACER_STRAT_T", "8.0"))       # [s] orizzonte della simulazione
+STRAT_DT = 0.2
+STRAT_TSUB = float(os.environ.get("PACER_STRAT_TSUB", "3.2"))  # [s] sotto-goal per l'MPC
+STRAT_LAT = (0.0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4)            # [m] scarto laterale della via
+STRAT_HOLD = ((0.0, 1.0), (1.2, 0.4), (2.4, 0.4), (1.2, 0.0), (2.4, 0.0))   # (durata [s], frazione di v_max)
+STRAT_W_IN = float(os.environ.get("PACER_STRAT_W_IN", "30.0"))     # [s per s] in moto dentro una regione
+STRAT_W_STILL = float(os.environ.get("PACER_STRAT_W_STILL", "3.0"))  # [s per s] fermo dentro una regione
+STRAT_W_STOP = float(os.environ.get("PACER_STRAT_W_STOP", "0.3"))    # [s per s] fermo (in generale)
+STRAT_HYST = float(os.environ.get("PACER_STRAT_HYST", "0.4"))        # [s] bonus alla strategia precedente
+STRAT_VIA_D = 3.0                    # [m] distanza della via lungo la direzione del goal
+_STRAT_PREV = {"c": (0.0, 0)}
+
+
+def _ped_futures(obstacles, N, T, dt):
+    """Posizioni (J, M, 2) e raggi (J, M) delle persone a t = dt, 2dt, ..., T: interpolazione della
+    predizione (passo DT) e prosecuzione a velocita' costante oltre l'orizzonte."""
+    M = int(round(T / dt))
+    ts = dt * np.arange(1, M + 1)
+    P_, R_ = [], []
+    for o in obstacles:
+        mu = np.vstack([np.asarray(o["mu0"], float)[None], np.asarray(o["mu"][:N], float)])
+        q2 = np.asarray(o["q2"][:N], float)
+        Si = np.asarray(o["Sigma_inv"][:N], float)
+        rad = np.sqrt(np.maximum(np.where(np.isfinite(q2), q2, 0.0), 0.0)
+                      / (0.5 * (Si[:, 0, 0] + Si[:, 1, 1]) + 1e-9)) * OCC_INFL
+        if not np.any(rad > 0):
+            continue
+        last = rad[rad > 0][-1]
+        rad = np.where(rad > 0, rad, last)
+        tk = DT * np.arange(0, N + 1)
+        vel = (mu[-1] - mu[-2]) / DT
+        px = np.interp(ts, tk, mu[:, 0]) + np.maximum(ts - tk[-1], 0) * vel[0]
+        py = np.interp(ts, tk, mu[:, 1]) + np.maximum(ts - tk[-1], 0) * vel[1]
+        rr = np.interp(ts, tk[1:], rad)
+        P_.append(np.stack([px, py], 1)); R_.append(rr)
+    if not P_:
+        return np.zeros((0, M, 2)), np.zeros((0, M))
+    return np.array(P_), np.array(R_)
+
+
+def select_strategy(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max, halfplanes=()):
+    """Ritorna (sotto-goal (2,), (lat, hold), costo, controlli (N, 2) della strategia a passo DT)."""
+    x0 = np.asarray(x0, float); goal = np.asarray(goal, float)
+    PP, RR = _ped_futures(obstacles, N, STRAT_T, STRAT_DT)
+    cands = [(l, h) for l in STRAT_LAT for h in range(len(STRAT_HOLD))]
+    C = len(cands); M = int(round(STRAT_T / STRAT_DT))
+    dg = goal - x0[:2]; dist0 = float(np.linalg.norm(dg))
+    e = dg / (dist0 + 1e-9); nrm = np.array([-e[1], e[0]])
+    via = np.array([x0[:2] + e * min(STRAT_VIA_D, 0.6 * dist0) + nrm * l for l, _ in cands])
+    hold_t = np.array([STRAT_HOLD[h][0] for _, h in cands]); hold_v = np.array([STRAT_HOLD[h][1] for _, h in cands])
+    px = np.full(C, x0[0]); py = np.full(C, x0[1]); th = np.full(C, x0[2])
+    v = np.full(C, max(v_mis, 0.0)); w = np.full(C, float(w_mis))
+    passed = np.array([l == 0.0 for l, _ in cands])
+    cost = np.zeros(C); t_reach = np.full(C, np.nan)
+    traj = np.zeros((C, M, 2)); ctrl = np.zeros((C, M, 2))
+    for m in range(M):
+        t = (m + 1) * STRAT_DT
+        tgt = np.where(passed[:, None], goal[None], via)
+        dx = tgt[:, 0] - px; dy = tgt[:, 1] - py
+        err = (np.arctan2(dy, dx) - th + np.pi) % (2 * np.pi) - np.pi
+        w_c = np.clip(2.5 * err, -omega_max, omega_max)
+        w = np.clip(w_c, w - ALPHA * STRAT_DT, w + ALPHA * STRAT_DT)
+        v_c = np.where(t <= hold_t, hold_v * v_max, v_max) * np.clip(np.cos(err), 0.0, 1.0)
+        dgo = np.hypot(goal[0] - px, goal[1] - py)
+        v_c = np.minimum(v_c, np.sqrt(2 * A_DEC * np.maximum(dgo - 0.1, 0.0)))
+        v = np.where(v_c >= v, np.minimum(v_c, v + A_ACC * STRAT_DT), np.maximum(v_c, v - A_DEC * STRAT_DT))
+        px = px + v * np.cos(th) * STRAT_DT; py = py + v * np.sin(th) * STRAT_DT; th = th + w * STRAT_DT
+        traj[:, m] = np.stack([px, py], 1); ctrl[:, m] = np.stack([v, w], 1)
+        # via superata quando la proiezione lungo e arriva a 0.3 m da quella della via
+        passed |= ((np.stack([px, py], 1) - via) @ e) > -0.3
+        live = np.isnan(t_reach)
+        dgo = np.hypot(goal[0] - px, goal[1] - py)
+        if len(PP):
+            d = np.hypot(px[:, None] - PP[None, :, m, 0], py[:, None] - PP[None, :, m, 1])   # (C, J)
+            inside = np.maximum(0.0, 1.0 - d / RR[None, :, m]).max(1)
+            moving = v > EPS_V
+            cost += live * STRAT_DT * inside * np.where(moving, STRAT_W_IN, STRAT_W_STILL)
+        for nx_, ny_, dd in halfplanes:
+            cost += live * STRAT_DT * STRAT_W_IN * np.maximum(0.0, dd - (nx_ * px + ny_ * py))
+        cost += live * STRAT_DT * STRAT_W_STOP * (v < EPS_V) * (dgo > 0.5)
+        t_reach = np.where(live & (dgo < 0.3), t, t_reach)
+    dgo = np.hypot(goal[0] - px, goal[1] - py)
+    t_arr = np.where(np.isnan(t_reach), STRAT_T + dgo / max(v_max, 1e-3), t_reach)
+    total = cost + t_arr
+    prev = _STRAT_PREV["c"]
+    if prev in cands:
+        total[cands.index(prev)] -= STRAT_HYST
+    i = int(np.argmin(total))
+    _STRAT_PREV["c"] = cands[i]
+    ms = int(round(STRAT_TSUB / STRAT_DT)) - 1
+    sub = goal if (cands[i] == (0.0, 0) or dist0 < STRAT_VIA_D) else traj[i, ms]
+    step = int(round(DT / STRAT_DT))
+    u = ctrl[i, step - 1::step][:N].copy()
+    if len(u) < N:
+        u = np.vstack([u, np.zeros((N - len(u), 2))])
+    select_strategy.last = dict(choice=cands[i], cost=float(total[i]), straight=float(total[0]), sub=sub)
+    return sub, cands[i], float(total[i]), u
+
+
+select_strategy.last = None
+
+
+# --- selettore veloce (rev. 2026-11-25 sera) ---------------------------------------------------
+# Stessa idea di select_strategy, con quattro risparmi:
+# 1. solo le persone che possono interagire col robot entro STRAT_T (distanza dalla loro traiettoria
+#    predetta meno il raggio della regione < raggiungibile dal robot + 0.5 m);
+# 2. nessuna persona rilevante (o il rettilineo senza attesa non ha penalita'): si sceglie il
+#    rettilineo senza simulare le altre strategie (caso piu' frequente);
+# 3. 28 strategie invece di 35 (tolto il rallentamento lungo, (2.4 s, 0.4));
+# 4. passo di simulazione STRATF_DT = 0.4 s con il controllo di distanza anche a meta' passo
+#    (stessa risoluzione spaziale del passo 0.2 s per il contatto).
+STRAT_FAST = os.environ.get("PACER_STRAT_FAST", "0") == "1"
+STRATF_DT = 0.4
+STRATF_HOLD = ((0.0, 1.0), (1.2, 0.4), (1.2, 0.0), (2.4, 0.0))
+STRATF_MARGIN = 0.5
+# Taratura per la folla (rev. 2026-11-25 sera, dopo v54): oltre l'orizzonte del predittore (N*DT)
+# la persona e' solo prolungata in linea retta, quindi (a) i conflitti pesano meno col tempo,
+# fattore exp(-(t - N*DT) / STRAT_TAU), (b) la regione non cresce oltre STRAT_R_FAR, e (c) il
+# selettore cambia strategia solo se il rettilineo ha una penalita' oltre STRAT_ACT.
+STRAT_TAU = float(os.environ.get("PACER_STRAT_TAU", "1e9"))      # [s] 1e9 = nessuno sconto (v54)
+STRAT_R_FAR = float(os.environ.get("PACER_STRAT_R_FAR", "1e9"))  # [m] 1e9 = come la regione a N (v54)
+STRAT_ACT = float(os.environ.get("PACER_STRAT_ACT", "1e-9"))     # [s] soglia di attivazione (v54: ~0)
+# Corsie fisse (rev. 2026-11-25 notte, diagnosi v56): le vie laterali erano relative alla posizione
+# attuale del robot, quindi "+0.8 m" scelto due volte di fila diventava +1.6 m (deriva) e nella
+# folla il selettore cambiava strategia ogni 2-3 cicli (42-161 cambi per episodio, zig-zag). Con
+# STRAT_LANES le vie sono corsie fisse rispetto alla retta del percorso (path_org, path_dir), piu'
+# la corsia attuale del robot; cambiare corsia costa STRAT_SWITCH secondi per metro, cambiare tipo
+# di attesa STRAT_SWITCH_H secondi.
+STRAT_LANES = os.environ.get("PACER_STRAT_LANES", "0") == "1"
+STRAT_SWITCH = float(os.environ.get("PACER_STRAT_SWITCH", "0.8"))
+STRAT_SWITCH_H = float(os.environ.get("PACER_STRAT_SWITCH_H", "0.5"))
+# Chi sorpassa da dietro (rev. 2026-11-25 notte): una persona dietro al robot che va nella stessa
+# direzione piu' veloce lo raggiunge comunque; spostarsi per lei rallenta il robot (marciapiede).
+# Con STRAT_IGNORE_BEHIND il selettore non la considera (resta il vincolo dell'MPC e il filtro).
+STRAT_IGNORE_BEHIND = os.environ.get("PACER_STRAT_IGNORE_BEHIND", "0") == "1"
+
+
+def _strat_sim(x0, v_mis, w_mis, goal, cands, holds, PP, RR, halfplanes, v_max, omega_max, dt, M):
+    """Simula le strategie cands = [(lat, i_hold)] per M passi di dt. PP (J, 2M, 2), RR (J, 2M):
+    persone a meta' passo e a fine passo. Ritorna (costo totale, traiettorie (C, M, 2), controlli)."""
+    goal = np.asarray(goal, float)
+    C = len(cands)
+    dg = goal - x0[:2]; dist0 = float(np.linalg.norm(dg))
+    e = dg / (dist0 + 1e-9); nrm = np.array([-e[1], e[0]])
+    lat = np.array([c[0] for c in cands])
+    via = x0[:2][None] + e[None] * min(STRAT_VIA_D, 0.6 * dist0) + nrm[None] * lat[:, None]
+    hold_t = np.array([holds[c[1]][0] for c in cands]); hold_v = np.array([holds[c[1]][1] for c in cands])
+    px = np.full(C, x0[0]); py = np.full(C, x0[1]); th = np.full(C, x0[2])
+    v = np.full(C, max(v_mis, 0.0)); w = np.full(C, float(w_mis))
+    passed = lat == 0.0
+    cost = np.zeros(C); t_reach = np.full(C, np.nan)
+    traj = np.zeros((C, M, 2)); ctrl = np.zeros((C, M, 2))
+    J = len(PP)
+    for m in range(M):
+        t = (m + 1) * dt
+        tx = np.where(passed, goal[0], via[:, 0]); ty = np.where(passed, goal[1], via[:, 1])
+        err = (np.arctan2(ty - py, tx - px) - th + np.pi) % (2 * np.pi) - np.pi
+        w = np.clip(np.clip(2.5 * err, -omega_max, omega_max), w - ALPHA * dt, w + ALPHA * dt)
+        dgo = np.hypot(goal[0] - px, goal[1] - py)
+        v_c = np.minimum(np.where(t <= hold_t, hold_v * v_max, v_max) * np.clip(np.cos(err), 0.0, 1.0),
+                         np.sqrt(2 * A_DEC * np.maximum(dgo - 0.1, 0.0)))
+        v = np.where(v_c >= v, np.minimum(v_c, v + A_ACC * dt), np.maximum(v_c, v - A_DEC * dt))
+        hx = px + 0.5 * v * np.cos(th) * dt; hy = py + 0.5 * v * np.sin(th) * dt
+        px = px + v * np.cos(th) * dt; py = py + v * np.sin(th) * dt; th = th + w * dt
+        traj[:, m, 0] = px; traj[:, m, 1] = py; ctrl[:, m, 0] = v; ctrl[:, m, 1] = w
+        passed |= ((px - via[:, 0]) * e[0] + (py - via[:, 1]) * e[1]) > -0.3
+        live = np.isnan(t_reach)
+        dgo = np.hypot(goal[0] - px, goal[1] - py)
+        if J:
+            ins = 0.0
+            for (qx, qy), col in (((hx, hy), 2 * m), ((px, py), 2 * m + 1)):
+                d = np.hypot(qx[:, None] - PP[None, :, col, 0], qy[:, None] - PP[None, :, col, 1])
+                ins = np.maximum(ins, np.maximum(0.0, 1.0 - d / RR[None, :, col]).max(1))
+            cost += live * dt * ins * np.where(v > EPS_V, STRAT_W_IN, STRAT_W_STILL)
+        for nx_, ny_, dd in halfplanes:
+            cost += live * dt * STRAT_W_IN * np.maximum(0.0, dd - (nx_ * px + ny_ * py))
+        cost += live * dt * STRAT_W_STOP * (v < EPS_V) * (dgo > 0.5)
+        t_reach = np.where(live & (dgo < 0.3), t, t_reach)
+    dgo = np.hypot(goal[0] - px, goal[1] - py)
+    t_arr = np.where(np.isnan(t_reach), M * dt + dgo / max(v_max, 1e-3), t_reach)
+    return cost, cost + t_arr, traj, ctrl
+
+
+def _strat_sim_vec(x0, v_mis, goal, cands, holds, PP, RR, halfplanes, v_max, omega_max, dt, M, wt=None,
+                   via=None):
+    """Versione senza ciclo sui passi: ogni strategia e' il percorso a due tratti x0 -> via -> goal
+    percorso con il suo profilo di velocita' (attesa/rallentamento, poi v_max, limiti di
+    accelerazione); la rotazione iniziale verso il primo tratto costa |angolo| / omega_max secondi
+    di ritardo. Controllo delle persone a passo dt/2. Stesse uscite di _strat_sim."""
+    goal = np.asarray(goal, float)
+    C = len(cands)
+    dg = goal - x0[:2]; dist0 = float(np.linalg.norm(dg))
+    e = dg / (dist0 + 1e-9); nrm = np.array([-e[1], e[0]])
+    lat = np.array([c[0] for c in cands], float)
+    if via is None:
+        via = np.where((lat == 0.0)[:, None], goal[None],
+                       x0[:2][None] + e[None] * min(STRAT_VIA_D, 0.6 * dist0) + nrm[None] * lat[:, None])
+    seg1 = via - x0[:2][None]; L1 = np.linalg.norm(seg1, axis=1)
+    seg2 = goal[None] - via; L2 = np.linalg.norm(seg2, axis=1)
+    d1 = seg1 / (L1[:, None] + 1e-9); d2 = seg2 / (L2[:, None] + 1e-9)
+    ang = np.abs((np.arctan2(d1[:, 1], d1[:, 0]) - x0[2] + np.pi) % (2 * np.pi) - np.pi)
+    t_turn = ang / max(omega_max, 1e-3)
+    # profilo di velocita' per ogni attesa (H righe), passo dt/2
+    h2 = 0.5 * dt; K = 2 * M
+    ts = h2 * np.arange(1, K + 1)
+    key = (round(max(v_mis, 0.0), 2), float(v_max), h2, K, tuple(holds), A_ACC, A_DEC)
+    vh = _VPROF.get(key)
+    if vh is None:                         # profili per ogni attesa, in cache per velocita' iniziale
+        H = len(holds)
+        vh = np.zeros((H, K)); v = np.full(H, key[0])
+        ht = np.array([h[0] for h in holds]); hv = np.array([h[1] for h in holds])
+        for k in range(K):
+            vc = np.where(ts[k] <= ht, hv * v_max, v_max)
+            v = np.where(vc >= v, np.minimum(vc, v + A_ACC * h2), np.maximum(vc, v - A_DEC * h2))
+            vh[:, k] = v
+        if len(_VPROF) > 4096:
+            _VPROF.clear()
+        _VPROF[key] = vh
+    hidx = np.array([c[1] for c in cands])
+    vel = vh[hidx]                                                    # (C, K)
+    # ritardo di rotazione: velocita' nulla per i primi t_turn secondi (approssimazione)
+    vel = np.where(ts[None] < t_turn[:, None], 0.0, vel)
+    s = np.cumsum(vel, 1) * h2                                       # arco percorso
+    Ltot = L1 + L2
+    s = np.minimum(s, Ltot[:, None])
+    on1 = s <= L1[:, None]
+    pos = np.where(on1[..., None], x0[:2][None, None] + d1[:, None] * s[..., None],
+                   via[:, None] + d2[:, None] * (s - L1[:, None])[..., None])     # (C, K, 2)
+    reached = s >= Ltot[:, None] - 0.3
+    t_reach = np.where(reached.any(1), ts[np.argmax(reached, 1)], np.nan)
+    live = ~np.concatenate([np.zeros((C, 1), bool), reached[:, :-1]], 1)    # passi prima dell'arrivo
+    still = vel < EPS_V
+    cost = np.zeros(C)
+    if len(PP):
+        d = np.hypot(pos[:, None, :, 0] - PP[None, :, :, 0], pos[:, None, :, 1] - PP[None, :, :, 1])  # (C, J, K)
+        ins = np.maximum(0.0, 1.0 - d / RR[None]).max(1)                                               # (C, K)
+        if wt is not None:
+            ins = ins * wt[None]
+        cost += (h2 * ins * np.where(still, STRAT_W_STILL, STRAT_W_IN) * live).sum(1)
+    for nx_, ny_, dd in halfplanes:
+        cost += (h2 * STRAT_W_IN * np.maximum(0.0, dd - (nx_ * pos[..., 0] + ny_ * pos[..., 1])) * live).sum(1)
+    cost += (h2 * STRAT_W_STOP * still * ~reached * live).sum(1)
+    dgo = Ltot - s[:, -1]
+    t_arr = np.where(np.isnan(t_reach), K * h2 + dgo / max(v_max, 1e-3), t_reach)
+    # controlli a passo dt (velocita' lungo il percorso; omega verso la direzione del tratto)
+    traj = pos[:, 1::2]
+    vv = vel[:, 1::2]
+    hd = np.where(on1[:, 1::2], np.arctan2(d1[:, 1], d1[:, 0])[:, None], np.arctan2(d2[:, 1], d2[:, 0])[:, None])
+    prev_h = np.concatenate([np.full((C, 1), x0[2]), hd[:, :-1]], 1)
+    ww = np.clip(((hd - prev_h + np.pi) % (2 * np.pi) - np.pi) / dt, -omega_max, omega_max)
+    ctrl = np.stack([vv, ww], 2)
+    return cost, cost + t_arr, traj, ctrl
+
+
+STRAT_VEC = os.environ.get("PACER_STRAT_VEC", "1") == "1"
+_VPROF = {}   # selettore veloce: simulazione senza ciclo
+
+
+def select_strategy_fast(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max, halfplanes=(),
+                         path_dir=None, path_org=None):
+    """Come select_strategy (stessa interfaccia), piu' veloce: vedi il commento sopra."""
+    x0 = np.asarray(x0, float); goal = np.asarray(goal, float)
+    dt = STRATF_DT; M = int(round(STRAT_T / dt))
+    if STRAT_IGNORE_BEHIND and obstacles:
+        hd = np.array([np.cos(x0[2]), np.sin(x0[2])])
+        keep_o = []
+        for o in obstacles:
+            p0 = np.asarray(o["mu0"], float); vel = (np.asarray(o["mu"][0], float) - p0) / DT
+            behind = float((p0 - x0[:2]) @ hd) < -0.3
+            same = float(vel @ hd) > 0.3
+            if not (behind and same):
+                keep_o.append(o)
+        obstacles = keep_o
+    PP, RR = _ped_futures(obstacles, N, STRAT_T, dt / 2)           # (J, 2M, ...)
+    tsh = 0.5 * dt * np.arange(1, 2 * M + 1)
+    far = tsh > N * DT
+    if len(RR) and STRAT_R_FAR < 1e8:
+        RR = np.where(far[None], np.minimum(RR, STRAT_R_FAR), RR)
+    wt = np.where(far, np.exp(-(tsh - N * DT) / STRAT_TAU), 1.0) if STRAT_TAU < 1e8 else None
+    if len(PP):
+        ts = 0.5 * dt * np.arange(1, 2 * M + 1)
+        reach = v_max * ts + STRATF_MARGIN                          # robot: al massimo v_max * t
+        dmin = np.hypot(PP[:, :, 0] - x0[0], PP[:, :, 1] - x0[1]) - RR
+        keep = (dmin < reach[None]).any(1)
+        PP, RR = PP[keep], RR[keep]
+    dist0 = float(np.linalg.norm(goal - x0[:2]))
+    straight = (0.0, 0)
+    stats = dict(n_peds=int(len(PP)), n_cands=1)
+
+    def done(ch, sub, u, tot):
+        _STRAT_PREV["c"] = ch
+        select_strategy.last = dict(choice=ch, cost=tot, sub=sub, **stats)
+        return sub, ch, tot, u
+
+    def plan_of(ctrl_i):
+        u = ctrl_i[:N].copy() if abs(DT - dt) < 1e-9 else ctrl_i[int(round(DT / dt)) - 1::int(round(DT / dt))][:N].copy()
+        return np.vstack([u, np.zeros((N - len(u), 2))]) if len(u) < N else u
+
+    if not len(PP) and not halfplanes:
+        return done(straight, goal, None, 0.0)
+    if STRAT_VEC:
+        def sim(x0_, vm, wm, g, c, h, P_, R_, hp, vmax, om, dt_, M_, via=None):
+            return _strat_sim_vec(x0_, vm, g, c, h, P_, R_, hp, vmax, om, dt_, M_, wt, via)
+    else:
+        sim = _strat_sim
+    pen, tot, traj, ctrl = sim(x0, v_mis, w_mis, goal, [straight], STRATF_HOLD, PP, RR, halfplanes,
+                                      v_max, omega_max, dt, M)
+    if pen[0] <= STRAT_ACT:
+        return done(straight, goal, plan_of(ctrl[0]), float(tot[0]))
+    if STRAT_LANES and STRAT_VEC:
+        pdir = np.asarray(path_dir if path_dir is not None else (goal - x0[:2]) / (dist0 + 1e-9), float)
+        porg = np.asarray(path_org if path_org is not None else x0[:2], float)
+        if float((goal - x0[:2]) @ pdir) < 0:                # giro di ritorno: retta percorsa al contrario
+            pdir = -pdir
+        nrm = np.array([-pdir[1], pdir[0]])
+        s0 = float((x0[:2] - porg) @ pdir); c0 = float((x0[:2] - porg) @ nrm)
+        s_goal = float((goal - porg) @ pdir)
+        lanes = sorted(set([round(l, 2) for l in STRAT_LAT] + [round(c0, 2)]))
+        cands = [(l, h) for l in lanes for h in range(len(STRATF_HOLD))]
+        s_via = min(s0 + STRAT_VIA_D, s_goal)
+        via = np.array([porg + pdir * s_via + nrm * l for l, _ in cands])
+        stats["n_cands"] = len(cands)
+        pen, tot, traj, ctrl = sim(x0, v_mis, w_mis, goal, cands, STRATF_HOLD, PP, RR, halfplanes,
+                                   v_max, omega_max, dt, M, via=via)
+        prev = _STRAT_PREV["c"]
+        prev_lane = prev[0] if prev != straight else c0     # dal rettilineo: si parte dalla corsia attuale
+        tot += STRAT_SWITCH * np.abs(np.array([l for l, _ in cands]) - prev_lane)
+        tot += STRAT_SWITCH_H * (np.array([h for _, h in cands]) != prev[1])
+    else:
+        cands = [(l, h) for l in STRAT_LAT for h in range(len(STRATF_HOLD))]
+        stats["n_cands"] = len(cands)
+        pen, tot, traj, ctrl = sim(x0, v_mis, w_mis, goal, cands, STRATF_HOLD, PP, RR, halfplanes,
+                                   v_max, omega_max, dt, M)
+        prev = _STRAT_PREV["c"]
+        if prev in cands:
+            tot[cands.index(prev)] -= STRAT_HYST
+    i = int(np.argmin(tot))
+    ms = max(int(round(STRAT_TSUB / dt)) - 1, 0)
+    sub = goal if (cands[i] == straight or dist0 < STRAT_VIA_D) else traj[i, ms]
+    return done(cands[i], sub, plan_of(ctrl[i]), float(tot[i]))
+
+
+# Retta delle corsie senza percorso globale (rev. 2026-11-26, ROS): il nodo ROS non passa la retta
+# del percorso e il goal e' un punto di lookahead che si sposta col robot. Le corsie del selettore
+# devono restare fisse, quindi si tiene un'ancora (origine, direzione) e la si rifa' solo quando la
+# direzione verso il goal ruota di piu' di LANE_REANCHOR_DEG o il goal esce di piu' di
+# LANE_REANCHOR_LAT metri dalla retta (curva del percorso).
+LANE_REANCHOR_DEG = float(os.environ.get("PACER_LANE_REANCHOR_DEG", "25"))
+LANE_REANCHOR_LAT = float(os.environ.get("PACER_LANE_REANCHOR_LAT", "1.0"))
+_LANE_ANCHOR = {}
+
+
+def _lane_anchor(x0, goal):
+    p = np.asarray(x0[:2], float); g = np.asarray(goal, float)
+    d = g - p; nd = float(np.linalg.norm(d))
+    if nd < 1e-6:
+        return np.array([1.0, 0.0]), p
+    d = d / nd
+    a = _LANE_ANCHOR
+    if a:
+        cosang = float(d @ a["dir"])
+        lat = float(abs(np.cross(a["dir"], g - a["org"])))
+        if cosang > np.cos(np.radians(LANE_REANCHOR_DEG)) and lat < LANE_REANCHOR_LAT:
+            return a["dir"], a["org"]
+    a["dir"], a["org"] = d, p
+    return d, p
+
+
 def solve_step(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max, u_warm=None,
                feas_tol=1e-4, path_dir=None, path_org=None, halfplanes=(), statics=()):
     """statics: lista di (x, y, d_safe) per il costo soft degli ostacoli statici.
@@ -462,11 +934,31 @@ def solve_step(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max, u_warm=No
                              statics=list(statics)), fh)
     t0 = time.perf_counter()
     goal = np.asarray(goal, float)
+    goal_true = goal.copy()
+    if path_dir is None and STRATEGY and STRAT_LANES:
+        path_dir, path_org = _lane_anchor(x0, goal)
     if path_dir is None:
         d = goal - np.asarray(x0[:2], float)
         path_dir = d / (np.linalg.norm(d) + 1e-9)
     if path_org is None:
         path_org = np.asarray(x0[:2], float)
+    if STRATEGY:
+        prev_c = _STRAT_PREV["c"]
+        if STRAT_FAST:
+            goal, choice, _, u_strat = select_strategy_fast(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max,
+                                                            list(halfplanes)[:H_MAX], path_dir, path_org)
+        else:
+            goal, choice, _, u_strat = select_strategy(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max,
+                                                       list(halfplanes)[:H_MAX])
+        if u_strat is not None and (choice != prev_c or u_warm is None):
+            u_warm = u_strat     # cambio di strategia: si parte dal suo piano
+    if W_OCC > 0 and (OCC_APPROACH or OCC_GOAL_R > 0):
+        obstacles = _mark_approaching(x0, obstacles) if OCC_APPROACH else [dict(o) for o in obstacles]
+        if OCC_GOAL_R > 0:
+            dgoal = float(np.linalg.norm(np.asarray(goal_true, float) - np.asarray(x0[:2], float)))
+            fade = float(np.clip((dgoal - OCC_GOAL_R) / OCC_GOAL_R, 0.0, 1.0))
+            for o in obstacles:
+                o["occ_on"] = float(o.get("occ_on", 1.0)) * fade
     if PRUNE:
         obstacles = _prune(x0, v_mis, v_max, obstacles, N)
     halfplanes, statics = list(halfplanes)[:H_MAX], list(statics)
@@ -484,7 +976,10 @@ def solve_step(x0, v_mis, w_mis, goal, obstacles, N, v_max, omega_max, u_warm=No
     solve_step.last_solver = None
     for i_init, u_init, slv in attempts:
         if MULTISTART in ("lazy", "one", "0") and best is not None:
-            break
+            # liberare la strada: se il piano trovato resta nelle regioni predette, si provano anche
+            # le curve a sinistra e a destra (rompe la simmetria del frontale)
+            if not ((W_OCC > 0 or W_AHEAD > 0) and MULTISTART == "lazy" and _occ(x0, best[1].reshape(N, 2), obstacles, N) > OCC_MS):
+                break
         if T_BUDGET > 0 and i_init >= 1 and time.perf_counter() - t0 > T_BUDGET:
             break
         x_init = np.clip(u_init.ravel(), lbx, ubx)
